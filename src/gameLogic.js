@@ -31,3 +31,17 @@ export function isLevelFailed(state) {
 export function isLevelCleared(state) {
   return state.enemiesRemaining <= 0 && !isLevelFailed(state);
 }
+
+export function pollutionStatus(value) {
+  if (value >= 90) return { label: "Kollapsnah", color: "#ff4d3d" };
+  if (value >= 65) return { label: "Kritisch", color: "#ff8a4c" };
+  if (value >= 30) return { label: "Belastet", color: "#ffd166" };
+  return { label: "Stabil", color: "#41e5b4" };
+}
+
+export function resultRank({ pollution, playerHealth }) {
+  if (pollution <= 15 && playerHealth >= 85) return "S";
+  if (pollution <= 35 && playerHealth >= 65) return "A";
+  if (pollution <= 60 && playerHealth >= 40) return "B";
+  return "C";
+}

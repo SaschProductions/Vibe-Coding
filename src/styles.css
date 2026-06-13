@@ -57,7 +57,7 @@ h1 {
 
 .status-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(96px, 1fr));
+  grid-template-columns: repeat(5, minmax(104px, 1fr));
   gap: 10px;
 }
 
@@ -92,12 +92,13 @@ canvas {
 .overlay {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-content: center;
-  gap: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
   text-align: center;
-  background: rgba(4, 9, 11, 0.72);
+  background: rgba(4, 9, 11, 0.76);
+  backdrop-filter: blur(6px);
 }
 
 .overlay[hidden] {
@@ -128,6 +129,60 @@ button {
   cursor: pointer;
 }
 
+.briefing {
+  width: min(720px, 100%);
+  display: grid;
+  gap: 16px;
+  justify-items: center;
+  padding: 26px;
+  border: 1px solid rgba(65, 229, 180, 0.34);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(16, 27, 32, 0.94), rgba(6, 16, 18, 0.92));
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
+}
+
+.briefing.result {
+  border-color: rgba(255, 209, 102, 0.36);
+}
+
+.eyebrow {
+  margin: 0;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
+.briefing-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.briefing-grid div {
+  min-width: 0;
+  padding: 10px;
+  border-radius: 6px;
+  background: rgba(23, 37, 43, 0.88);
+  border: 1px solid rgba(147, 168, 162, 0.18);
+}
+
+.briefing-grid span {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.briefing-grid strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
 .controls {
   flex-wrap: wrap;
   justify-content: center;
@@ -142,6 +197,10 @@ button {
   }
 
   .status-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .briefing-grid {
     grid-template-columns: 1fr;
   }
 }
