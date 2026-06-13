@@ -1,17 +1,17 @@
 export const LEVELS = [
   {
     id: 1,
-    name: "Harbor Haze",
-    biome: "coast",
-    threat: "drifting smog drones",
-    metricLabel: "Harbor air quality",
+    name: "Kuestenalarm",
+    biome: "Kueste",
+    threat: "Smog-Drohnen und Leck-Kanister",
+    metricLabel: "Luftqualitaet am Hafen",
     background: {
       sky: "#7cc9d8",
       ground: "#2f8f83",
       accent: "#ffd166"
     },
     targetPollution: 18,
-    intro: "Clear the bay before the morning breeze carries smog inland.",
+    intro: "Stoppe die ersten Drohnen und lerne, wie Verschmutzung als Timer funktioniert.",
     polluters: [
       { type: "smogDrone", hp: 1, score: 10, pollution: 2, speed: 0.9 },
       { type: "leakCanister", hp: 2, score: 20, pollution: 4, speed: 0.55 }
@@ -24,17 +24,17 @@ export const LEVELS = [
   },
   {
     id: 2,
-    name: "Forest Circuit",
-    biome: "forest",
-    threat: "unmanned cutting bots",
-    metricLabel: "Tree canopy health",
+    name: "Waldbrandlinie",
+    biome: "Wald",
+    threat: "Abholzungsbots und Aschekapseln",
+    metricLabel: "Waldgesundheit",
     background: {
       sky: "#8fd6a5",
       ground: "#236b45",
       accent: "#f4d35e"
     },
     targetPollution: 22,
-    intro: "Protect the young canopy from roaming cutter machines.",
+    intro: "Schuetze die Baumkronen vor unbemannten Schneidemaschinen.",
     polluters: [
       { type: "cutterBot", hp: 1, score: 12, pollution: 3, speed: 1 },
       { type: "ashPod", hp: 2, score: 24, pollution: 5, speed: 0.65 }
@@ -47,17 +47,17 @@ export const LEVELS = [
   },
   {
     id: 3,
-    name: "Reef Reset",
-    biome: "reef",
-    threat: "plastic skimmers",
-    metricLabel: "Reef clarity",
+    name: "Korallenriff",
+    biome: "Riff",
+    threat: "Plastik-Skimmer und Mikroplastik",
+    metricLabel: "Riffgesundheit",
     background: {
       sky: "#65c7f7",
       ground: "#147f8a",
       accent: "#ff9f80"
     },
     targetPollution: 26,
-    intro: "Push back the plastic sweepers before they cloud the reef.",
+    intro: "Halte Plastikschwaerme auf, bevor das Riff erstickt.",
     polluters: [
       { type: "plasticSkimmer", hp: 1, score: 12, pollution: 3, speed: 1.15 },
       { type: "microbin", hp: 1, score: 8, pollution: 2, speed: 1.35 },
@@ -71,17 +71,17 @@ export const LEVELS = [
   },
   {
     id: 4,
-    name: "Desert Mirrors",
-    biome: "desert",
-    threat: "dust exhaust rigs",
-    metricLabel: "Solar field output",
+    name: "Solarfeld",
+    biome: "Wuestenzone",
+    threat: "Staub-Rigs und Russpanzer",
+    metricLabel: "Solarfeld-Leistung",
     background: {
       sky: "#f8c471",
       ground: "#b86f34",
       accent: "#3dd6d0"
     },
     targetPollution: 30,
-    intro: "Keep the solar field clear while dust rigs roll in waves.",
+    intro: "Halte die Solarfelder frei, waehrend Staubmaschinen anruecken.",
     polluters: [
       { type: "dustRig", hp: 2, score: 22, pollution: 4, speed: 0.8 },
       { type: "heatDrone", hp: 1, score: 14, pollution: 3, speed: 1.2 },
@@ -95,17 +95,17 @@ export const LEVELS = [
   },
   {
     id: 5,
-    name: "City Breath",
-    biome: "city",
-    threat: "idle-stack automata",
-    metricLabel: "Neighborhood clean air",
+    name: "Smog ueber der City",
+    biome: "Innenstadt",
+    threat: "Abgasautomaten und Muellkisten",
+    metricLabel: "Stadtluft",
     background: {
       sky: "#9fb3c8",
       ground: "#4b5563",
       accent: "#7ddf64"
     },
     targetPollution: 34,
-    intro: "Shut down the unattended stacks before the skyline turns gray.",
+    intro: "Schalte die Abgasquellen aus, bevor die Skyline im Smog verschwindet.",
     polluters: [
       { type: "stackBot", hp: 2, score: 24, pollution: 5, speed: 0.75 },
       { type: "smogDrone", hp: 1, score: 10, pollution: 2, speed: 1.25 },
@@ -119,17 +119,17 @@ export const LEVELS = [
   },
   {
     id: 6,
-    name: "Tundra Signal",
-    biome: "tundra",
-    threat: "warming relay units",
-    metricLabel: "Ice stability",
+    name: "Gletscherbruch",
+    biome: "Arktis",
+    threat: "Waerme-Relais und Schmelzkerne",
+    metricLabel: "Eisstabilitaet",
     background: {
       sky: "#b8e7f5",
       ground: "#d9f2f2",
       accent: "#5c6bc0"
     },
     targetPollution: 38,
-    intro: "Break the relay pattern before heat pulses crack the ice.",
+    intro: "Unterbrich die Waerme-Relais, bevor das Eis bricht.",
     polluters: [
       { type: "relayUnit", hp: 2, score: 26, pollution: 5, speed: 0.85 },
       { type: "sparkDrone", hp: 1, score: 14, pollution: 3, speed: 1.35 },
@@ -143,17 +143,17 @@ export const LEVELS = [
   },
   {
     id: 7,
-    name: "Wetland Watch",
-    biome: "wetland",
-    threat: "runoff siphons",
-    metricLabel: "Waterway balance",
+    name: "Flussgift",
+    biome: "Feuchtgebiet",
+    threat: "Abfluss-Siphons und Spruehdrohnen",
+    metricLabel: "Wasserqualitaet",
     background: {
       sky: "#a0d9b4",
       ground: "#3a7d60",
       accent: "#f7b267"
     },
     targetPollution: 42,
-    intro: "Stop the siphons before runoff spreads through the marsh.",
+    intro: "Stoppe die Abflussquellen, bevor Gift durch das Marschland zieht.",
     polluters: [
       { type: "runoffSiphon", hp: 3, score: 34, pollution: 7, speed: 0.58 },
       { type: "sprayDrone", hp: 1, score: 16, pollution: 3, speed: 1.4 },
@@ -167,17 +167,17 @@ export const LEVELS = [
   },
   {
     id: 8,
-    name: "Mountain Current",
-    biome: "mountain",
-    threat: "scrap turbines",
-    metricLabel: "Alpine stream purity",
+    name: "Bergstrom",
+    biome: "Gebirge",
+    threat: "Schrott-Turbinen und Oelfass-Bots",
+    metricLabel: "Bachreinheit",
     background: {
       sky: "#91c4f2",
       ground: "#5d737e",
       accent: "#c3f73a"
     },
     targetPollution: 46,
-    intro: "Clean the pass so fresh snowmelt can reach the valley.",
+    intro: "Sichere den Pass, damit klares Schmelzwasser das Tal erreicht.",
     polluters: [
       { type: "scrapTurbine", hp: 3, score: 36, pollution: 7, speed: 0.7 },
       { type: "gritDrone", hp: 1, score: 16, pollution: 3, speed: 1.45 },
@@ -191,17 +191,17 @@ export const LEVELS = [
   },
   {
     id: 9,
-    name: "Farmstead Dawn",
-    biome: "farmland",
-    threat: "overspray machines",
-    metricLabel: "Soil vitality",
+    name: "Wiesensterben",
+    biome: "Wiesen",
+    threat: "Pestizidmaschinen und Nitratkapseln",
+    metricLabel: "Bodenleben",
     background: {
       sky: "#f4e285",
       ground: "#6a994e",
       accent: "#386641"
     },
     targetPollution: 50,
-    intro: "Defend the fields from runaway overspray machines.",
+    intro: "Verteidige Felder und Bluetenstreifen vor unkontrollierten Spruehmaschinen.",
     polluters: [
       { type: "oversprayBot", hp: 2, score: 28, pollution: 6, speed: 1 },
       { type: "nitratePod", hp: 3, score: 38, pollution: 8, speed: 0.72 },
@@ -215,17 +215,17 @@ export const LEVELS = [
   },
   {
     id: 10,
-    name: "Skyline Renewal",
-    biome: "metro",
-    threat: "mega smog network",
-    metricLabel: "Regional recovery",
+    name: "Konzernkern",
+    biome: "Metro-Zentrale",
+    threat: "Mega-Smog-Netzwerk",
+    metricLabel: "Regionale Stabilitaet",
     background: {
       sky: "#6ec6ca",
       ground: "#394867",
       accent: "#ffcc4d"
     },
     targetPollution: 56,
-    intro: "One final network of machines is trying to blanket the region.",
+    intro: "Das finale Netzwerk versucht, alle Regionen gleichzeitig zu ueberlasten.",
     polluters: [
       { type: "smogDrone", hp: 1, score: 12, pollution: 3, speed: 1.45 },
       { type: "stackBot", hp: 2, score: 26, pollution: 5, speed: 1 },

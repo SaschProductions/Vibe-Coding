@@ -22,9 +22,10 @@ const LEVELS = LEVEL_DATA.map((level, index) => ({
   ...level,
   top: level.background.sky,
   bottom: level.background.ground,
-  count: level.waves.reduce((sum, wave) => sum + wave.count, 0),
+  count: index === 0 ? 5 : level.waves.reduce((sum, wave) => sum + wave.count, 0),
+  training: index === 0,
   boss: index === LEVEL_DATA.length - 1,
-  pollutionRate: index === LEVEL_DATA.length - 1 ? 1.4 : 0.22 + level.targetPollution / 90
+  pollutionRate: index === 0 ? 0.12 : index === LEVEL_DATA.length - 1 ? 1.4 : 0.22 + level.targetPollution / 90
 }));
 
 const keys = new Set();
@@ -46,7 +47,6 @@ let message = "";
 let messageTimer = 0;
 let mouseDown = false;
 let levelElapsed = 0;
-let autoFire = true;
 
 function resetLevel(nextIndex = levelIndex) {
   levelIndex = clamp(nextIndex, 0, LEVELS.length - 1);
@@ -59,7 +59,7 @@ function resetLevel(nextIndex = levelIndex) {
   cooldown = 0;
   skillCooldown = 0;
   levelElapsed = 0;
-  message = `${level.biome}: ${level.threat} stoppen`;
+  message = level.training ? "Training: Halte Leertaste oder Linksklick zum Schiessen" : level.intro;
   messageTimer = 2.4;
   enemies = createEnemies(level);
   state = createInitialState({ playerHealth: 100, pollution: 0, enemiesRemaining: enemies.length });
@@ -93,11 +93,11 @@ function createEnemies(level) {
       y: 88 + row * 76,
       w: 58,
       h: 36,
-      hp: i % 5 === 0 ? 4 : i % 3 === 0 ? 3 : 2,
-      maxHp: i % 5 === 0 ? 4 : i % 3 === 0 ? 3 : 2,
+      hp: level.training ? 1 : i % 5 === 0 ? 4 : i % 3 === 0 ? 3 : 2,
+      maxHp: level.training ? 1 : i % 5 === 0 ? 4 : i % 3 === 0 ? 3 : 2,
       dir: 1,
-      leak: Math.random() * 1.8,
-      shoot: Math.random() * 1.5
+      leak: level.training ? 3 + Math.random() * 2 : Math.random() * 1.8,
+      shoot: level.training ? 4 + Math.random() * 2 : Math.random() * 1.5
     });
   }
   return result;
@@ -133,7 +133,7 @@ function update(dt) {
   if (keys.has("ArrowLeft") || keys.has("KeyA")) dx -= 1;
   if (keys.has("ArrowRight") || keys.has("KeyD")) dx += 1;
   player.x = clamp(player.x + dx * player.speed * dt, 32, W - 32);
-  if (autoFire || keys.has("Space") || mouseDown) fire();
+  if (keys.has("Space") || mouseDown) fire();
 
   updateEnemies(level, dt);
   updateBullets(dt);
@@ -160,13 +160,13 @@ function updateEnemies(level, dt) {
 
     enemy.leak -= dt;
     if (enemy.leak <= 0) {
-      enemy.leak = enemy.type === "boss" ? 0.28 : enemy.type === "polluter" ? 0.75 : 1.8;
+      enemy.leak = enemy.type === "boss" ? 0.28 : level.training ? 3.2 : enemy.type === "polluter" ? 0.75 : 1.8;
       spawnHazard(enemy, level);
     }
 
     enemy.shoot -= dt;
     if (enemy.shoot <= 0) {
-      enemy.shoot = enemy.type === "boss" ? 0.55 : 1.4 + Math.random() * 1.4;
+      enemy.shoot = enemy.type === "boss" ? 0.55 : level.training ? 3.5 + Math.random() * 2 : 1.4 + Math.random() * 1.4;
       enemyBullets.push({
         x: enemy.x + enemy.w / 2,
         y: enemy.y + enemy.h,
@@ -188,7 +188,13 @@ function spawnHazard(enemy, level) {
     "Riffgesundheit": "#d66cff",
     "Stadtgruen": "#b9b86b",
     "Meeresverschmutzung": "#070707",
-    "Muellbelastung": "#b8c0c2"
+    "Muellbelastung": "#b8c0c2",
+    "Luftqualitaet am Hafen": "#8f9290",
+    "Solarfeld-Leistung": "#c9aa52",
+    "Stadtluft": "#8f9290",
+    "Bachreinheit": "#8aff62",
+    "Bodenleben": "#a4e04d",
+    "Regionale Stabilitaet": "#ff754a"
   };
   hazards.push({
     x: enemy.x + enemy.w / 2,
@@ -208,7 +214,7 @@ function updateBullets(dt) {
 
   for (const bullet of bullets) {
     for (const enemy of enemies) {
-      if (!bullet.dead && rectPoint(enemy, bullet.x, bullet.y)) {
+      if (!bullet.dead && rectPoint(enemy, bullet.x, bullet.y, 18)) {
         bullet.dead = true;
         enemy.hp -= bullet.power;
         burst(bullet.x, bullet.y, "#41e5b4", 6);
@@ -258,8 +264,9 @@ function updateParticles(dt) {
 function fire() {
   if (cooldown > 0 || !running) return;
   cooldown = 0.16;
-  bullets.push({ x: player.x - 12, y: player.y - 22, vy: 600, power: 1 });
-  bullets.push({ x: player.x + 12, y: player.y - 22, vy: 600, power: 1 });
+  bullets.push({ x: player.x - 26, y: player.y - 22, vy: 600, power: 1 });
+  bullets.push({ x: player.x, y: player.y - 24, vy: 620, power: 1 });
+  bullets.push({ x: player.x + 26, y: player.y - 22, vy: 600, power: 1 });
   burst(player.x, player.y - 18, "#9fffea", 3);
 }
 
@@ -456,8 +463,8 @@ function pollutionColor(value) {
   return "#41e5b4";
 }
 
-function rectPoint(rect, x, y) {
-  return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+function rectPoint(rect, x, y, padding = 0) {
+  return x >= rect.x - padding && x <= rect.x + rect.w + padding && y >= rect.y - padding && y <= rect.y + rect.h + padding;
 }
 
 function rectCircle(rect, x, y, r) {
@@ -485,14 +492,6 @@ function updateLabels() {
   levelLabel.textContent = `${level.id} / ${LEVELS.length}`;
   scoreLabel.textContent = String(score);
   skillLabel.textContent = skillCooldown <= 0 ? "bereit" : `${skillCooldown.toFixed(1)}s`;
-  window.ecoDebug = {
-    running,
-    health: Math.round(state.playerHealth),
-    pollution: Math.round(state.pollution),
-    enemies: enemies.length,
-    hazards: hazards.length,
-    level: level.name
-  };
 }
 
 window.addEventListener("keydown", (event) => {
