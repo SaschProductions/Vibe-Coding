@@ -7,7 +7,8 @@ import {
   isLevelFailed,
   isLevelCleared,
   pollutionStatus,
-  resultRank
+  resultRank,
+  pollutionTick
 } from "../src/gameLogic.js";
 
 assert.equal(clamp(120, 0, 100), 100);
@@ -39,5 +40,9 @@ assert.equal(resultRank({ pollution: 8, playerHealth: 92 }), "S");
 assert.equal(resultRank({ pollution: 31, playerHealth: 71 }), "A");
 assert.equal(resultRank({ pollution: 55, playerHealth: 52 }), "B");
 assert.equal(resultRank({ pollution: 80, playerHealth: 25 }), "C");
+
+assert.equal(pollutionTick({ pollutionRate: 0.6, hazardCount: 0, dt: 1 }), 0.35);
+assert.equal(pollutionTick({ pollutionRate: 0.6, hazardCount: 12, dt: 1 }), 0.59);
+assert.equal(pollutionTick({ pollutionRate: 4, hazardCount: 30, dt: 1 }), 1.2);
 
 console.log("gameLogic tests passed");
