@@ -5,7 +5,9 @@ import {
   applyPollution,
   resolveHit,
   isLevelFailed,
-  isLevelCleared
+  isLevelCleared,
+  pollutionStatus,
+  resultRank
 } from "../src/gameLogic.js";
 
 assert.equal(clamp(120, 0, 100), 100);
@@ -27,5 +29,15 @@ assert.equal(hitState.playerHealth, 18);
 assert.equal(hitState.pollution, 0);
 assert.equal(hitState.enemiesRemaining, 0);
 assert.equal(isLevelCleared(hitState), true);
+
+assert.deepEqual(pollutionStatus(12), { label: "Stabil", color: "#41e5b4" });
+assert.deepEqual(pollutionStatus(44), { label: "Belastet", color: "#ffd166" });
+assert.deepEqual(pollutionStatus(72), { label: "Kritisch", color: "#ff8a4c" });
+assert.deepEqual(pollutionStatus(96), { label: "Kollapsnah", color: "#ff4d3d" });
+
+assert.equal(resultRank({ pollution: 8, playerHealth: 92 }), "S");
+assert.equal(resultRank({ pollution: 31, playerHealth: 71 }), "A");
+assert.equal(resultRank({ pollution: 55, playerHealth: 52 }), "B");
+assert.equal(resultRank({ pollution: 80, playerHealth: 25 }), "C");
 
 console.log("gameLogic tests passed");

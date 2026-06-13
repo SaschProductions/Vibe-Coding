@@ -19,6 +19,14 @@
             <strong id="levelLabel">1 / 10</strong>
           </div>
           <div>
+            <span>Bedrohung</span>
+            <strong id="threatLabel">-</strong>
+          </div>
+          <div>
+            <span>Umwelt</span>
+            <strong id="environmentLabel">Stabil</strong>
+          </div>
+          <div>
             <span>Score</span>
             <strong id="scoreLabel">0</strong>
           </div>
@@ -32,15 +40,18 @@
       <section class="game-wrap" aria-label="Spielbereich">
         <canvas id="game" width="1024" height="640" tabindex="0" aria-label="Eco Defender Spielfeld"></canvas>
         <div id="overlay" class="overlay">
-          <h2>Eco Defender</h2>
-          <p>Stoppe fiktive Umweltbedrohungen, bevor die Umweltanzeige kollabiert.</p>
-          <button id="startButton" type="button">Starten</button>
+          <div class="briefing">
+            <p class="eyebrow">Einsatzbereit</p>
+            <h2>Eco Defender</h2>
+            <p>Stoppe fiktive Umweltbedrohungen, bevor die Umweltanzeige kollabiert.</p>
+            <button type="button" data-action="start">Starten</button>
+          </div>
         </div>
       </section>
 
       <section class="controls" aria-label="Steuerung">
         <span>A/D oder Pfeile: bewegen</span>
-        <span>Autofire aktiv, Leertaste oder Linksklick: Zusatzfeuer</span>
+        <span>Leertaste halten oder Linksklick halten: schiessen</span>
         <span>Q oder Rechtsklick: Reinigungspuls</span>
         <span>R: Level neu starten</span>
       </section>

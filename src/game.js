@@ -3,15 +3,18 @@ import {
   clamp,
   createInitialState,
   isLevelCleared,
-  isLevelFailed
+  isLevelFailed,
+  pollutionStatus,
+  resultRank
 } from "./gameLogic.js";
 import { LEVELS as LEVEL_DATA } from "./content/levels.js";
 
 const canvas = document.querySelector("#game");
 const ctx = canvas.getContext("2d");
 const overlay = document.querySelector("#overlay");
-const startButton = document.querySelector("#startButton");
 const levelLabel = document.querySelector("#levelLabel");
+const threatLabel = document.querySelector("#threatLabel");
+const environmentLabel = document.querySelector("#environmentLabel");
 const scoreLabel = document.querySelector("#scoreLabel");
 const skillLabel = document.querySelector("#skillLabel");
 
@@ -22,13 +25,15 @@ const LEVELS = LEVEL_DATA.map((level, index) => ({
   ...level,
   top: level.background.sky,
   bottom: level.background.ground,
-  count: level.waves.reduce((sum, wave) => sum + wave.count, 0),
+  count: index === 0 ? 4 : level.waves.reduce((sum, wave) => sum + wave.count, 0),
+  training: index === 0,
   boss: index === LEVEL_DATA.length - 1,
-  pollutionRate: index === LEVEL_DATA.length - 1 ? 1.4 : 0.22 + level.targetPollution / 90
+  pollutionRate: index === 0 ? 0.12 : index === LEVEL_DATA.length - 1 ? 1.4 : 0.22 + level.targetPollution / 90
 }));
 
 const keys = new Set();
 let pointerX = W / 2;
+let mouseActive = false;
 let lastTime = 0;
 let running = false;
 let levelIndex = 0;
@@ -46,7 +51,6 @@ let message = "";
 let messageTimer = 0;
 let mouseDown = false;
 let levelElapsed = 0;
-let autoFire = true;
 
 function resetLevel(nextIndex = levelIndex) {
   levelIndex = clamp(nextIndex, 0, LEVELS.length - 1);
@@ -59,7 +63,7 @@ function resetLevel(nextIndex = levelIndex) {
   cooldown = 0;
   skillCooldown = 0;
   levelElapsed = 0;
-  message = `${level.biome}: ${level.threat} stoppen`;
+  message = level.training ? "Training: Halte Leertaste oder Linksklick zum Schiessen" : level.intro;
   messageTimer = 2.4;
   enemies = createEnemies(level);
   state = createInitialState({ playerHealth: 100, pollution: 0, enemiesRemaining: enemies.length });
@@ -83,6 +87,25 @@ function createEnemies(level) {
   }
 
   const result = [];
+  if (level.training) {
+    const trainingPositions = [314, 438, 562, 686];
+    for (let i = 0; i < trainingPositions.length; i += 1) {
+      result.push({
+        type: i === 0 ? "polluter" : "drone",
+        x: trainingPositions[i] - 29,
+        y: i < 2 ? 116 : 178,
+        w: 58,
+        h: 36,
+        hp: 1,
+        maxHp: 1,
+        dir: i % 2 === 0 ? 1 : -1,
+        leak: 4 + Math.random() * 2,
+        shoot: 5 + Math.random() * 2
+      });
+    }
+    return result;
+  }
+
   const cols = Math.min(6, Math.ceil(level.count / 2));
   for (let i = 0; i < level.count; i += 1) {
     const col = i % cols;
@@ -93,23 +116,76 @@ function createEnemies(level) {
       y: 88 + row * 76,
       w: 58,
       h: 36,
-      hp: i % 5 === 0 ? 4 : i % 3 === 0 ? 3 : 2,
-      maxHp: i % 5 === 0 ? 4 : i % 3 === 0 ? 3 : 2,
+      hp: level.training ? 1 : i % 5 === 0 ? 4 : i % 3 === 0 ? 3 : 2,
+      maxHp: level.training ? 1 : i % 5 === 0 ? 4 : i % 3 === 0 ? 3 : 2,
       dir: 1,
-      leak: Math.random() * 1.8,
-      shoot: Math.random() * 1.5
+      leak: level.training ? 3 + Math.random() * 2 : Math.random() * 1.8,
+      shoot: level.training ? 4 + Math.random() * 2 : Math.random() * 1.5
     });
   }
   return result;
 }
 
-function startGame() {
+function beginLevel(index, resetScore = false) {
+  if (resetScore) score = 0;
   running = true;
   overlay.hidden = true;
   canvas.focus();
-  resetLevel(0);
+  resetLevel(index);
   lastTime = performance.now();
   requestAnimationFrame(loop);
+}
+
+function startGame() {
+  beginLevel(0, true);
+}
+
+function briefingMarkup(level, action, buttonText) {
+  return `
+    <div class="briefing">
+      <p class="eyebrow">Level ${level.id} / ${LEVELS.length} - ${level.biome}</p>
+      <h2>${level.name}</h2>
+      <div class="briefing-grid">
+        <div><span>Bedrohung</span><strong>${level.threat}</strong></div>
+        <div><span>Umweltziel</span><strong>${level.metricLabel}</strong></div>
+        <div><span>Auftrag</span><strong>${level.training ? "Training und erste Neutralisierung" : "Bedrohung stoppen"}</strong></div>
+      </div>
+      <p>${level.training ? "Halte Leertaste oder Linksklick zum Schiessen. Nutze Q fuer den Reinigungspuls." : level.intro}</p>
+      <button type="button" data-action="${action}">${buttonText}</button>
+    </div>`;
+}
+
+function showLevelBriefing(nextIndex = levelIndex, action = "start", buttonText = "Starten") {
+  const level = LEVELS[clamp(nextIndex, 0, LEVELS.length - 1)];
+  overlay.innerHTML = briefingMarkup(level, action, buttonText);
+  overlay.hidden = false;
+}
+
+function showResult(won, level, bonus = 0) {
+  const status = pollutionStatus(state.pollution);
+  const rank = won ? resultRank(state) : "-";
+  const title = won ? `${level.name} gesichert` : state.pollution >= 100 ? "Umweltkollaps" : "Einsatzfahrzeug kritisch";
+  const body = won
+    ? `${level.metricLabel}: ${Math.round(100 - state.pollution)}% stabil. Rang ${rank}. Bonus ${bonus}.`
+    : state.pollution >= 100
+      ? `${level.threat} war zu lange aktiv. ${level.metricLabel} ist gekippt.`
+      : "Dein Schild ist gefallen. Setze den Reinigungspuls frueher ein und bleib in Bewegung.";
+  const action = won && levelIndex < LEVELS.length - 1 ? "next" : "restart";
+  const buttonText = won && levelIndex < LEVELS.length - 1 ? "Naechster Einsatz" : "Neu starten";
+
+  overlay.innerHTML = `
+    <div class="briefing result">
+      <p class="eyebrow">${won ? "Einsatz erfolgreich" : "Einsatz fehlgeschlagen"}</p>
+      <h2>${title}</h2>
+      <div class="briefing-grid">
+        <div><span>Rang</span><strong>${rank}</strong></div>
+        <div><span>Umweltstatus</span><strong style="color:${status.color}">${status.label}</strong></div>
+        <div><span>Score</span><strong>${score}</strong></div>
+      </div>
+      <p>${body}</p>
+      <button type="button" data-action="${action}">${buttonText}</button>
+    </div>`;
+  overlay.hidden = false;
 }
 
 function loop(now) {
@@ -133,7 +209,10 @@ function update(dt) {
   if (keys.has("ArrowLeft") || keys.has("KeyA")) dx -= 1;
   if (keys.has("ArrowRight") || keys.has("KeyD")) dx += 1;
   player.x = clamp(player.x + dx * player.speed * dt, 32, W - 32);
-  if (autoFire || keys.has("Space") || mouseDown) fire();
+  if (mouseActive) {
+    player.x = clamp(player.x + (pointerX - player.x) * Math.min(1, dt * 10), 32, W - 32);
+  }
+  if (keys.has("Space") || mouseDown) fire();
 
   updateEnemies(level, dt);
   updateBullets(dt);
@@ -150,7 +229,7 @@ function update(dt) {
 }
 
 function updateEnemies(level, dt) {
-  const speed = level.boss ? 86 : 42 + levelIndex * 4;
+  const speed = level.training ? 0 : level.boss ? 86 : 42 + levelIndex * 4;
   for (const enemy of enemies) {
     enemy.x += enemy.dir * speed * dt;
     if (enemy.x < 34 || enemy.x + enemy.w > W - 34) {
@@ -160,13 +239,13 @@ function updateEnemies(level, dt) {
 
     enemy.leak -= dt;
     if (enemy.leak <= 0) {
-      enemy.leak = enemy.type === "boss" ? 0.28 : enemy.type === "polluter" ? 0.75 : 1.8;
+      enemy.leak = enemy.type === "boss" ? 0.28 : level.training ? 3.2 : enemy.type === "polluter" ? 0.75 : 1.8;
       spawnHazard(enemy, level);
     }
 
     enemy.shoot -= dt;
     if (enemy.shoot <= 0) {
-      enemy.shoot = enemy.type === "boss" ? 0.55 : 1.4 + Math.random() * 1.4;
+      enemy.shoot = enemy.type === "boss" ? 0.55 : level.training ? 3.5 + Math.random() * 2 : 1.4 + Math.random() * 1.4;
       enemyBullets.push({
         x: enemy.x + enemy.w / 2,
         y: enemy.y + enemy.h,
@@ -188,7 +267,13 @@ function spawnHazard(enemy, level) {
     "Riffgesundheit": "#d66cff",
     "Stadtgruen": "#b9b86b",
     "Meeresverschmutzung": "#070707",
-    "Muellbelastung": "#b8c0c2"
+    "Muellbelastung": "#b8c0c2",
+    "Luftqualitaet am Hafen": "#8f9290",
+    "Solarfeld-Leistung": "#c9aa52",
+    "Stadtluft": "#8f9290",
+    "Bachreinheit": "#8aff62",
+    "Bodenleben": "#a4e04d",
+    "Regionale Stabilitaet": "#ff754a"
   };
   hazards.push({
     x: enemy.x + enemy.w / 2,
@@ -208,7 +293,7 @@ function updateBullets(dt) {
 
   for (const bullet of bullets) {
     for (const enemy of enemies) {
-      if (!bullet.dead && rectPoint(enemy, bullet.x, bullet.y)) {
+      if (!bullet.dead && rectPoint(enemy, bullet.x, bullet.y, 18)) {
         bullet.dead = true;
         enemy.hp -= bullet.power;
         burst(bullet.x, bullet.y, "#41e5b4", 6);
@@ -258,8 +343,9 @@ function updateParticles(dt) {
 function fire() {
   if (cooldown > 0 || !running) return;
   cooldown = 0.16;
-  bullets.push({ x: player.x - 12, y: player.y - 22, vy: 600, power: 1 });
-  bullets.push({ x: player.x + 12, y: player.y - 22, vy: 600, power: 1 });
+  bullets.push({ x: player.x - 26, y: player.y - 22, vy: 600, power: 1 });
+  bullets.push({ x: player.x, y: player.y - 24, vy: 620, power: 1 });
+  bullets.push({ x: player.x + 26, y: player.y - 22, vy: 600, power: 1 });
   burst(player.x, player.y - 18, "#9fffea", 3);
 }
 
@@ -276,35 +362,12 @@ function useSkill() {
 function endLevel(won) {
   running = false;
   const level = LEVELS[levelIndex];
+  let bonus = 0;
   if (won) {
-    const bonus = Math.round((100 - state.pollution) * 15 + state.playerHealth * 8);
+    bonus = Math.round((100 - state.pollution) * 15 + state.playerHealth * 8);
     score += bonus;
-    if (levelIndex < LEVELS.length - 1) {
-      overlay.innerHTML = `<h2>${level.name} gesichert</h2><p>${level.metricLabel}: ${Math.round(100 - state.pollution)}% stabil. Bonus ${bonus}.</p><button id="nextButton" type="button">Weiter</button>`;
-      overlay.hidden = false;
-      document.querySelector("#nextButton").addEventListener("click", () => {
-        running = true;
-        overlay.hidden = true;
-        resetLevel(levelIndex + 1);
-        lastTime = performance.now();
-        requestAnimationFrame(loop);
-      });
-      return;
-    }
   }
-
-  overlay.innerHTML = won
-    ? `<h2>Kampagne gewonnen</h2><p>Alle zehn Einsatzgebiete wurden stabilisiert. Score ${score}.</p><button id="restartButton" type="button">Neu starten</button>`
-    : `<h2>${state.pollution >= 100 ? "Umweltkollaps" : "Einsatzfahrzeug kritisch"}</h2><p>${state.pollution >= 100 ? `${level.threat} war zu lange aktiv. ${level.metricLabel} ist gekippt.` : "Dein Schild ist gefallen. Setze den Reinigungspuls frueher ein und bleib in Bewegung."}</p><button id="restartButton" type="button">Neu starten</button>`;
-  overlay.hidden = false;
-  document.querySelector("#restartButton").addEventListener("click", () => {
-    score = 0;
-    running = true;
-    overlay.hidden = true;
-    resetLevel(0);
-    lastTime = performance.now();
-    requestAnimationFrame(loop);
-  });
+  showResult(won, level, bonus);
 }
 
 function draw() {
@@ -355,14 +418,58 @@ function drawBackdrop(level) {
 }
 
 function drawHud(level) {
-  bar(24, 20, 260, 18, state.playerHealth, "#41e5b4", "Energie");
-  bar(W - 344, 20, 320, 18, state.pollution, pollutionColor(state.pollution), level.metricLabel);
+  const status = pollutionStatus(state.pollution);
+  ctx.fillStyle = "rgba(3, 12, 14, 0.62)";
+  roundRect(16, 12, 292, 60, 8);
+  ctx.fill();
+  roundRect(W / 2 - 214, 12, 428, 60, 8);
+  ctx.fill();
+  roundRect(W - 354, 12, 338, 60, 8);
+  ctx.fill();
+
+  bar(30, 28, 246, 16, state.playerHealth, "#41e5b4", "Energie");
+  bar(W - 330, 28, 292, 16, state.pollution, status.color, level.metricLabel);
+
   ctx.fillStyle = "#eff8f4";
   ctx.font = "18px system-ui";
   ctx.textAlign = "center";
-  ctx.fillText(`${level.name}: ${level.threat}`, W / 2, 35);
+  ctx.fillText(level.name, W / 2, 35);
+  ctx.fillStyle = "#d2e2dd";
   ctx.font = "13px system-ui";
-  ctx.fillText(`Q Cooldown: ${skillCooldown <= 0 ? "bereit" : skillCooldown.toFixed(1) + "s"}`, W / 2, 58);
+  ctx.fillText(level.threat, W / 2, 56);
+  ctx.fillStyle = "#41e5b4";
+  ctx.font = "12px system-ui";
+  ctx.fillText(`Ziele verbleibend: ${state.enemiesRemaining}`, W / 2, 70);
+  ctx.textAlign = "right";
+  ctx.fillStyle = status.color;
+  ctx.fillText(status.label, W - 38, 63);
+  drawSkillBar();
+}
+
+function drawSkillBar() {
+  const y = H - 48;
+  const slots = [
+    { label: "Schuss", value: cooldown <= 0 ? "bereit" : "laedt", color: "#9fffea" },
+    { label: "Reinigung Q", value: skillCooldown <= 0 ? "bereit" : `${skillCooldown.toFixed(1)}s`, color: skillCooldown <= 0 ? "#41e5b4" : "#ffd166" },
+    { label: "Autofire", value: "Skill gesperrt", color: "#93a8a2" }
+  ];
+
+  ctx.fillStyle = "rgba(3, 12, 14, 0.58)";
+  roundRect(W / 2 - 260, y - 10, 520, 42, 8);
+  ctx.fill();
+  slots.forEach((slot, index) => {
+    const x = W / 2 - 240 + index * 164;
+    ctx.strokeStyle = slot.color;
+    ctx.lineWidth = 2;
+    roundRect(x, y - 2, 146, 28, 6);
+    ctx.stroke();
+    ctx.fillStyle = slot.color;
+    ctx.font = "12px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText(slot.label, x + 73, y + 9);
+    ctx.fillStyle = "#eff8f4";
+    ctx.fillText(slot.value, x + 73, y + 22);
+  });
 }
 
 function drawPlayer() {
@@ -456,8 +563,8 @@ function pollutionColor(value) {
   return "#41e5b4";
 }
 
-function rectPoint(rect, x, y) {
-  return x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h;
+function rectPoint(rect, x, y, padding = 0) {
+  return x >= rect.x - padding && x <= rect.x + rect.w + padding && y >= rect.y - padding && y <= rect.y + rect.h + padding;
 }
 
 function rectCircle(rect, x, y, r) {
@@ -482,17 +589,13 @@ function triangle(x, y, w, h) {
 
 function updateLabels() {
   const level = LEVELS[levelIndex];
+  const status = pollutionStatus(state.pollution);
   levelLabel.textContent = `${level.id} / ${LEVELS.length}`;
+  threatLabel.textContent = level.threat;
+  environmentLabel.textContent = status.label;
+  environmentLabel.style.color = status.color;
   scoreLabel.textContent = String(score);
   skillLabel.textContent = skillCooldown <= 0 ? "bereit" : `${skillCooldown.toFixed(1)}s`;
-  window.ecoDebug = {
-    running,
-    health: Math.round(state.playerHealth),
-    pollution: Math.round(state.pollution),
-    enemies: enemies.length,
-    hazards: hazards.length,
-    level: level.name
-  };
 }
 
 window.addEventListener("keydown", (event) => {
@@ -514,12 +617,21 @@ window.addEventListener("keyup", (event) => {
 canvas.addEventListener("mousemove", (event) => {
   const rect = canvas.getBoundingClientRect();
   pointerX = ((event.clientX - rect.left) / rect.width) * W;
+  mouseActive = true;
 });
 
 canvas.addEventListener("pointerdown", (event) => {
+  const rect = canvas.getBoundingClientRect();
+  pointerX = ((event.clientX - rect.left) / rect.width) * W;
+  player.x = clamp(pointerX, 32, W - 32);
   canvas.focus();
+  mouseActive = true;
   mouseDown = true;
   if (event.button === 0) fire();
+});
+canvas.addEventListener("pointerleave", () => {
+  mouseActive = false;
+  mouseDown = false;
 });
 window.addEventListener("pointerup", () => {
   mouseDown = false;
@@ -529,6 +641,13 @@ canvas.addEventListener("contextmenu", (event) => {
   useSkill();
 });
 
-startButton.addEventListener("click", startGame);
+overlay.addEventListener("click", (event) => {
+  const action = event.target?.dataset?.action;
+  if (action === "start") startGame();
+  if (action === "restart") startGame();
+  if (action === "next") beginLevel(levelIndex + 1, false);
+});
+
 resetLevel(0);
+showLevelBriefing(0, "start", "Starten");
 draw();
