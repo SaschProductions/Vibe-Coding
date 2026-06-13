@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Eco Defender</title>
+    <link rel="stylesheet" href="src/styles.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="topbar" aria-label="Spielstatus">
+        <div>
+          <p class="label">Einsatz</p>
+          <h1>Eco Defender</h1>
+        </div>
+        <div class="status-grid">
+          <div>
+            <span>Level</span>
+            <strong id="levelLabel">1 / 10</strong>
+          </div>
+          <div>
+            <span>Score</span>
+            <strong id="scoreLabel">0</strong>
+          </div>
+          <div>
+            <span>Skill</span>
+            <strong id="skillLabel">Reinigungspuls</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="game-wrap" aria-label="Spielbereich">
+        <canvas id="game" width="1024" height="640" tabindex="0" aria-label="Eco Defender Spielfeld"></canvas>
+        <div id="overlay" class="overlay">
+          <h2>Eco Defender</h2>
+          <p>Stoppe fiktive Umweltbedrohungen, bevor die Umweltanzeige kollabiert.</p>
+          <button id="startButton" type="button">Starten</button>
+        </div>
+      </section>
+
+      <section class="controls" aria-label="Steuerung">
+        <span>A/D oder Pfeile: bewegen</span>
+        <span>Autofire aktiv, Leertaste oder Linksklick: Zusatzfeuer</span>
+        <span>Q oder Rechtsklick: Reinigungspuls</span>
+        <span>R: Level neu starten</span>
+      </section>
+    </main>
+
+    <script type="module" src="src/game.js"></script>
+  </body>
+</html>
