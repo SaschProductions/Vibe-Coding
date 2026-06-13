@@ -45,3 +45,9 @@ export function resultRank({ pollution, playerHealth }) {
   if (pollution <= 60 && playerHealth >= 40) return "B";
   return "C";
 }
+
+export function pollutionTick({ pollutionRate, hazardCount, dt }) {
+  const base = pollutionRate * 0.58 * dt;
+  const hazardPressure = Math.min(hazardCount, 16) * 0.02 * dt;
+  return Math.round(Math.min(1.2, base + hazardPressure) * 100) / 100;
+}

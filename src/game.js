@@ -4,6 +4,7 @@ import {
   createInitialState,
   isLevelCleared,
   isLevelFailed,
+  pollutionTick,
   pollutionStatus,
   resultRank
 } from "./gameLogic.js";
@@ -219,7 +220,7 @@ function update(dt) {
   updateHazards(dt);
   updateParticles(dt);
 
-  const pollutionStep = Math.min(0.06, level.pollutionRate * dt + hazards.length * 0.0015);
+  const pollutionStep = pollutionTick({ pollutionRate: level.pollutionRate, hazardCount: hazards.length, dt });
   applyPollution(state, pollutionStep);
   const failedByHealth = state.playerHealth <= 0;
   const failedByPollution = state.pollution >= 100 && levelElapsed > 18;
