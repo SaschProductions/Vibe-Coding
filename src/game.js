@@ -25,7 +25,7 @@ const LEVELS = LEVEL_DATA.map((level, index) => ({
   ...level,
   top: level.background.sky,
   bottom: level.background.ground,
-  count: index === 0 ? 5 : level.waves.reduce((sum, wave) => sum + wave.count, 0),
+  count: index === 0 ? 4 : level.waves.reduce((sum, wave) => sum + wave.count, 0),
   training: index === 0,
   boss: index === LEVEL_DATA.length - 1,
   pollutionRate: index === 0 ? 0.12 : index === LEVEL_DATA.length - 1 ? 1.4 : 0.22 + level.targetPollution / 90
@@ -33,6 +33,7 @@ const LEVELS = LEVEL_DATA.map((level, index) => ({
 
 const keys = new Set();
 let pointerX = W / 2;
+let mouseActive = false;
 let lastTime = 0;
 let running = false;
 let levelIndex = 0;
@@ -86,6 +87,25 @@ function createEnemies(level) {
   }
 
   const result = [];
+  if (level.training) {
+    const trainingPositions = [314, 438, 562, 686];
+    for (let i = 0; i < trainingPositions.length; i += 1) {
+      result.push({
+        type: i === 0 ? "polluter" : "drone",
+        x: trainingPositions[i] - 29,
+        y: i < 2 ? 116 : 178,
+        w: 58,
+        h: 36,
+        hp: 1,
+        maxHp: 1,
+        dir: i % 2 === 0 ? 1 : -1,
+        leak: 4 + Math.random() * 2,
+        shoot: 5 + Math.random() * 2
+      });
+    }
+    return result;
+  }
+
   const cols = Math.min(6, Math.ceil(level.count / 2));
   for (let i = 0; i < level.count; i += 1) {
     const col = i % cols;
@@ -189,6 +209,9 @@ function update(dt) {
   if (keys.has("ArrowLeft") || keys.has("KeyA")) dx -= 1;
   if (keys.has("ArrowRight") || keys.has("KeyD")) dx += 1;
   player.x = clamp(player.x + dx * player.speed * dt, 32, W - 32);
+  if (mouseActive) {
+    player.x = clamp(player.x + (pointerX - player.x) * Math.min(1, dt * 10), 32, W - 32);
+  }
   if (keys.has("Space") || mouseDown) fire();
 
   updateEnemies(level, dt);
@@ -206,7 +229,7 @@ function update(dt) {
 }
 
 function updateEnemies(level, dt) {
-  const speed = level.boss ? 86 : 42 + levelIndex * 4;
+  const speed = level.training ? 0 : level.boss ? 86 : 42 + levelIndex * 4;
   for (const enemy of enemies) {
     enemy.x += enemy.dir * speed * dt;
     if (enemy.x < 34 || enemy.x + enemy.w > W - 34) {
@@ -414,6 +437,9 @@ function drawHud(level) {
   ctx.fillStyle = "#d2e2dd";
   ctx.font = "13px system-ui";
   ctx.fillText(level.threat, W / 2, 56);
+  ctx.fillStyle = "#41e5b4";
+  ctx.font = "12px system-ui";
+  ctx.fillText(`Ziele verbleibend: ${state.enemiesRemaining}`, W / 2, 70);
   ctx.textAlign = "right";
   ctx.fillStyle = status.color;
   ctx.fillText(status.label, W - 38, 63);
@@ -591,12 +617,21 @@ window.addEventListener("keyup", (event) => {
 canvas.addEventListener("mousemove", (event) => {
   const rect = canvas.getBoundingClientRect();
   pointerX = ((event.clientX - rect.left) / rect.width) * W;
+  mouseActive = true;
 });
 
 canvas.addEventListener("pointerdown", (event) => {
+  const rect = canvas.getBoundingClientRect();
+  pointerX = ((event.clientX - rect.left) / rect.width) * W;
+  player.x = clamp(pointerX, 32, W - 32);
   canvas.focus();
+  mouseActive = true;
   mouseDown = true;
   if (event.button === 0) fire();
+});
+canvas.addEventListener("pointerleave", () => {
+  mouseActive = false;
+  mouseDown = false;
 });
 window.addEventListener("pointerup", () => {
   mouseDown = false;
