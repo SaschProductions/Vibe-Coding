@@ -20,14 +20,14 @@ import {
   weaponForLevel,
   upgradeOptions,
   upgradeWeapon
-} from "./gameLogic.js?v=publish-pass-13";
-import { LEVELS as LEVEL_DATA } from "./content/levels.js?v=publish-pass-13";
+} from "./gameLogic.js?v=publish-pass-15";
+import { LEVELS as LEVEL_DATA } from "./content/levels.js?v=publish-pass-15";
 import {
   biomeTheme,
   polluterVisual,
   pollutionVisual
-} from "./visualConfig.js?v=publish-pass-13";
-import { createAudioEngine } from "./audio.js?v=publish-pass-13";
+} from "./visualConfig.js?v=publish-pass-15";
+import { createAudioEngine } from "./audio.js?v=publish-pass-15";
 
 const canvas = document.querySelector("#game");
 const ctx = canvas.getContext("2d");
@@ -43,8 +43,28 @@ const soundToggle = document.querySelector("#soundToggle");
 const W = canvas.width;
 const H = canvas.height;
 
+const LEVEL_BACKDROP_ASSETS = [
+  "assets/levels/level-01-coast.png",
+  "assets/levels/level-02-forest.png",
+  "assets/levels/level-03-reef.png",
+  "assets/levels/level-04-solar.png",
+  "assets/levels/level-05-city.png",
+  "assets/levels/level-06-arctic.png",
+  "assets/levels/level-07-wetland.png",
+  "assets/levels/level-08-mountain.png",
+  "assets/levels/level-09-meadow.png",
+  "assets/levels/level-10-tanker.png"
+];
+
+const levelBackdropImages = LEVEL_BACKDROP_ASSETS.map((src) => {
+  const image = new Image();
+  image.src = src;
+  return image;
+});
+
 const LEVELS = LEVEL_DATA.map((level, index) => ({
   ...level,
+  artAsset: LEVEL_BACKDROP_ASSETS[index],
   top: level.background.sky,
   bottom: level.background.ground,
   training: index === 0,
@@ -646,13 +666,8 @@ function toggleSound() {
 function draw() {
   const level = LEVELS[levelIndex];
   const theme = biomeTheme(level.biome);
-  const gradient = ctx.createLinearGradient(0, 0, 0, H);
-  gradient.addColorStop(0, theme.horizon[0]);
-  gradient.addColorStop(1, theme.horizon[1]);
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, W, H);
 
-  drawBackdrop(level, theme);
+  drawBackdrop(level, theme, levelIndex);
   drawHud(level);
   hazards.forEach(drawHazard);
   enemies.forEach((enemy) => drawEnemy(enemy, level));
@@ -673,11 +688,68 @@ function draw() {
   }
 }
 
-function drawBackdrop(level, theme) {
+function comicStroke(width = 5, color = "#07171a") {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+}
+
+function shadeColor(color, amount) {
+  const hex = color.replace("#", "");
+  if (hex.length !== 6) return color;
+  const channels = [0, 2, 4].map((index) => parseInt(hex.slice(index, index + 2), 16));
+  const next = channels.map((value) => clamp(value + amount, 0, 255).toString(16).padStart(2, "0"));
+  return `#${next.join("")}`;
+}
+
+function drawComicGround(theme) {
   ctx.save();
-  ctx.globalAlpha = 0.2;
+  ctx.fillStyle = "rgba(5, 18, 20, 0.16)";
+  ctx.beginPath();
+  ctx.moveTo(0, 526);
+  for (let x = 0; x <= W + 80; x += 96) {
+    ctx.quadraticCurveTo(x + 42, 492 + (x % 3) * 10, x + 96, 526);
+  }
+  ctx.lineTo(W, H);
+  ctx.lineTo(0, H);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = `${theme.accent}44`;
+  comicStroke(5, theme.style.outline);
+  ctx.beginPath();
+  ctx.moveTo(0, 548);
+  for (let x = 0; x <= W + 90; x += 112) {
+    ctx.quadraticCurveTo(x + 48, 512 + (x % 4) * 7, x + 112, 548);
+  }
+  ctx.lineTo(W, H);
+  ctx.lineTo(0, H);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawBackdrop(level, theme, index) {
+  if (drawPaintedLevelBackdrop(index, theme)) {
+    drawPaintedBackdropGrade(theme);
+    drawScenarioProps(theme);
+    drawArcadeTexture(theme, 0.16);
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, H);
+  gradient.addColorStop(0, theme.horizon[0]);
+  gradient.addColorStop(1, theme.horizon[1]);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.save();
+  ctx.globalAlpha = 0.16;
   ctx.strokeStyle = theme.style.outline;
-  ctx.lineWidth = 3;
+  ctx.lineWidth = 4;
   for (let y = 98; y < H - 120; y += 74) {
     ctx.beginPath();
     ctx.moveTo(0, y);
@@ -696,10 +768,64 @@ function drawBackdrop(level, theme) {
   else if (theme.surface === "wetland") drawWetlandBackdrop(theme);
   else drawWaterBackdrop(theme);
 
+  drawComicGround(theme);
   drawScenarioThreats(level, theme);
   drawScenarioProps(theme);
-  drawArcadeTexture(theme);
+  drawArcadeTexture(theme, 1);
   ctx.globalAlpha = 1;
+}
+
+function drawPaintedLevelBackdrop(index, theme) {
+  const image = levelBackdropImages[index];
+  canvas.dataset.artAsset = LEVEL_BACKDROP_ASSETS[index] || "";
+  if (!image || !image.complete || image.naturalWidth === 0) {
+    canvas.dataset.artLoaded = "false";
+    return false;
+  }
+
+  const sourceRatio = image.naturalWidth / image.naturalHeight;
+  const targetRatio = W / H;
+  let sourceX = 0;
+  let sourceY = 0;
+  let sourceW = image.naturalWidth;
+  let sourceH = image.naturalHeight;
+
+  if (sourceRatio > targetRatio) {
+    sourceW = image.naturalHeight * targetRatio;
+    sourceX = (image.naturalWidth - sourceW) / 2;
+  } else if (sourceRatio < targetRatio) {
+    sourceH = image.naturalWidth / targetRatio;
+    sourceY = (image.naturalHeight - sourceH) / 2;
+  }
+
+  ctx.drawImage(image, sourceX, sourceY, sourceW, sourceH, 0, 0, W, H);
+  ctx.save();
+  ctx.fillStyle = "rgba(2, 10, 12, 0.1)";
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+  canvas.dataset.artLoaded = "true";
+  return true;
+}
+
+function drawPaintedBackdropGrade(theme) {
+  ctx.save();
+  const topShade = ctx.createLinearGradient(0, 0, 0, H);
+  topShade.addColorStop(0, "rgba(1, 8, 10, 0.04)");
+  topShade.addColorStop(0.54, "rgba(1, 8, 10, 0)");
+  topShade.addColorStop(1, "rgba(1, 8, 10, 0.38)");
+  ctx.fillStyle = topShade;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.globalAlpha = 0.14;
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 3;
+  for (let y = 98; y < H - 120; y += 74) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawScenarioThreats(level, theme) {
@@ -971,9 +1097,9 @@ function drawBarrelSpillBackdrop(theme) {
   ctx.restore();
 }
 
-function drawArcadeTexture(theme) {
+function drawArcadeTexture(theme, strength = 1) {
   ctx.save();
-  ctx.globalAlpha = 0.13;
+  ctx.globalAlpha = 0.13 * strength;
   ctx.fillStyle = theme.accent;
   for (let y = 118; y < H - 130; y += 28) {
     for (let x = (y % 56) / 2; x < W; x += 56) {
@@ -982,7 +1108,7 @@ function drawArcadeTexture(theme) {
       ctx.fill();
     }
   }
-  ctx.globalAlpha = 0.18;
+  ctx.globalAlpha = 0.18 * strength;
   ctx.strokeStyle = theme.style.outline;
   ctx.lineWidth = 6;
   ctx.strokeRect(10, 88, W - 20, H - 160);
@@ -1302,8 +1428,11 @@ function drawHud(level) {
   bar(W - 330, 28, 292, 16, state.pollution, status.color, level.metricLabel);
 
   ctx.fillStyle = "#f8fffb";
-  ctx.font = "800 19px system-ui";
+  ctx.font = "900 20px system-ui";
   ctx.textAlign = "center";
+  ctx.strokeStyle = "#07171a";
+  ctx.lineWidth = 4;
+  ctx.strokeText(level.name, W / 2, 35);
   ctx.fillText(level.name, W / 2, 35);
   ctx.fillStyle = "#d2e2dd";
   ctx.font = "13px system-ui";
@@ -1319,12 +1448,11 @@ function drawHud(level) {
 
 function comicPanel(x, y, w, h, theme) {
   ctx.save();
-  ctx.fillStyle = "rgba(5, 18, 20, 0.72)";
+  ctx.fillStyle = "rgba(5, 18, 20, 0.78)";
   roundRect(x + 4, y + 5, w, h, 8);
   ctx.fill();
-  ctx.fillStyle = "rgba(7, 29, 32, 0.84)";
-  ctx.strokeStyle = theme.style.outline;
-  ctx.lineWidth = 3;
+  ctx.fillStyle = "rgba(7, 29, 32, 0.88)";
+  comicStroke(4, theme.style.outline);
   roundRect(x, y, w, h, 8);
   ctx.fill();
   ctx.stroke();
@@ -1369,32 +1497,51 @@ function drawSkillBar() {
 
 function drawPlayer() {
   ctx.save();
-  ctx.fillStyle = "rgba(65, 229, 180, 0.2)";
+  ctx.fillStyle = "rgba(65, 229, 180, 0.24)";
   ctx.beginPath();
-  ctx.ellipse(player.x, player.y + 18, 44, 9, 0, 0, Math.PI * 2);
+  ctx.ellipse(player.x, player.y + 20, 52, 12, 0, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "#08303a";
-  ctx.lineWidth = 4;
+  comicStroke(5, "#08303a");
   ctx.fillStyle = "#dffdf5";
-  roundRect(player.x - 28, player.y - 14, 56, 28, 8);
+  roundRect(player.x - 34, player.y - 18, 68, 36, 14);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#efffff";
+  roundRect(player.x - 20, player.y - 27, 40, 18, 9);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#07171a";
+  ctx.beginPath();
+  ctx.arc(player.x - 8, player.y - 17, 3, 0, Math.PI * 2);
+  ctx.arc(player.x + 8, player.y - 17, 3, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = "#41e5b4";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(player.x, player.y - 12, 9, 0.18, Math.PI - 0.18);
+  ctx.stroke();
+  ctx.fillStyle = "#41e5b4";
+  roundRect(player.x - 22, player.y - 26, 44, 8, 4);
+  ctx.fill();
+  comicStroke(4, "#08303a");
+  ctx.stroke();
+  ctx.fillStyle = "#9fffea";
+  ctx.beginPath();
+  ctx.moveTo(player.x, player.y - 42);
+  ctx.lineTo(player.x - 12, player.y - 26);
+  ctx.lineTo(player.x + 12, player.y - 26);
+  ctx.closePath();
   ctx.fill();
   ctx.stroke();
   ctx.fillStyle = "#41e5b4";
-  ctx.fillRect(player.x - 18, player.y - 20, 36, 8);
-  ctx.fillStyle = "#9fffea";
   ctx.beginPath();
-  ctx.moveTo(player.x, player.y - 31);
-  ctx.lineTo(player.x - 10, player.y - 18);
-  ctx.lineTo(player.x + 10, player.y - 18);
-  ctx.closePath();
+  ctx.arc(player.x - 38, player.y + 7, 8, 0, Math.PI * 2);
+  ctx.arc(player.x + 38, player.y + 7, 8, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = "#41e5b4";
-  ctx.beginPath();
-  ctx.arc(player.x - 31, player.y + 5, 6, 0, Math.PI * 2);
-  ctx.arc(player.x + 31, player.y + 5, 6, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.stroke();
   ctx.fillStyle = "#0b1f22";
-  ctx.fillRect(player.x - 6, player.y - 8, 12, 8);
+  roundRect(player.x - 9, player.y - 4, 18, 11, 5);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -1482,6 +1629,40 @@ function drawEnemyRoleMarker(enemy, visual, isBoss, scale = 1) {
   ctx.restore();
 }
 
+function drawEnemyFace(x, y, w, h, visual, enemy, isBoss) {
+  if (isBoss) return;
+  ctx.save();
+  const cx = x + w * 0.5;
+  const eyeY = y + h * 0.4;
+  const eyeGap = Math.max(10, w * 0.16);
+  const eyeR = Math.max(5, Math.min(9, w * 0.09));
+  ctx.fillStyle = "#fff8dc";
+  comicStroke(3, "#07171a");
+  ctx.beginPath();
+  ctx.arc(cx - eyeGap, eyeY, eyeR, 0, Math.PI * 2);
+  ctx.arc(cx + eyeGap, eyeY, eyeR, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#07171a";
+  const glare = enemy.type === "polluter" ? -2 : enemy.type === "shield" ? 0 : 2;
+  ctx.beginPath();
+  ctx.arc(cx - eyeGap + glare, eyeY + 1, eyeR * 0.42, 0, Math.PI * 2);
+  ctx.arc(cx + eyeGap + glare, eyeY + 1, eyeR * 0.42, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = visual.secondary;
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  if (enemy.type === "polluter") {
+    ctx.moveTo(cx - 14, y + h * 0.67);
+    ctx.quadraticCurveTo(cx, y + h * 0.56, cx + 14, y + h * 0.67);
+  } else {
+    ctx.moveTo(cx - 12, y + h * 0.64);
+    ctx.quadraticCurveTo(cx, y + h * 0.74, cx + 12, y + h * 0.64);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
   const w = enemy.w * scale;
   const h = enemy.h * scale;
@@ -1491,11 +1672,10 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
   ctx.save();
   ctx.shadowColor = "rgba(0, 0, 0, 0.28)";
   ctx.shadowBlur = 0;
-  ctx.shadowOffsetX = 4;
-  ctx.shadowOffsetY = 5;
+  ctx.shadowOffsetX = 5;
+  ctx.shadowOffsetY = 6;
   ctx.fillStyle = visual.primary;
-  ctx.strokeStyle = "#07171a";
-  ctx.lineWidth = 4;
+  comicStroke(isBoss ? 6 : 5, "#07171a");
 
   if (isBoss && visual.body === "tanker") {
     drawTankerBoss(x, y, w, h, visual);
@@ -1520,15 +1700,19 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
   }
 
   if (visual.body === "drone") {
-    roundRect(x + 8, y + 6, w - 16, h - 8, 8);
+    roundRect(x + 4, y + 3, w - 8, h, 15);
     ctx.fill();
     ctx.stroke();
+    ctx.fillStyle = shadeColor(visual.primary, 30);
+    roundRect(x + 12, y + 8, w - 24, h * 0.28, 12);
+    ctx.fill();
     ctx.fillStyle = visual.secondary;
     ctx.beginPath();
-    ctx.arc(x + 6, y + 12, 9, 0, Math.PI * 2);
-    ctx.arc(x + w - 6, y + 12, 9, 0, Math.PI * 2);
+    ctx.arc(x + 2, y + h * 0.46, 11, 0, Math.PI * 2);
+    ctx.arc(x + w - 2, y + h * 0.46, 11, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    drawEnemyFace(x, y, w, h, visual, enemy, isBoss);
     drawEmissionPorts(x, y, w, h, visual, 1);
     ctx.restore();
     return;
@@ -1544,6 +1728,7 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
     ctx.lineWidth = 2;
     ctx.strokeRect(x + 20, y + 20, w - 40, 12);
     drawEmissionPorts(x, y, w, h, visual, 2);
+    drawEnemyFace(x, y, w, h, visual, enemy, isBoss);
     ctx.restore();
     return;
   }
@@ -1564,6 +1749,7 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
     ctx.arc(x + w / 2, y + h / 2, w * 0.31, 0, Math.PI * 2);
     ctx.stroke();
     drawEmissionPorts(x, y, w, h, visual, 1);
+    drawEnemyFace(x, y, w, h, visual, enemy, isBoss);
     ctx.restore();
     return;
   }
@@ -1582,6 +1768,7 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
     ctx.fillStyle = visual.secondary;
     ctx.fillRect(x + w * 0.22, y + h * 0.5, w * 0.56, 7);
     drawEmissionPorts(x, y, w, h, visual, 2);
+    drawEnemyFace(x, y, w, h, visual, enemy, isBoss);
     ctx.restore();
     return;
   }
@@ -1599,6 +1786,7 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
     ctx.lineTo(x + 10, y + h);
     ctx.stroke();
     drawEmissionPorts(x, y, w, h, visual, 1);
+    drawEnemyFace(x, y, w, h, visual, enemy, isBoss);
     ctx.restore();
     return;
   }
@@ -1621,6 +1809,7 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
     ctx.lineTo(x + w - 8, y + h * 0.74);
     ctx.stroke();
     drawEmissionPorts(x, y, w, h, visual, 2);
+    drawEnemyFace(x, y, w, h, visual, enemy, isBoss);
     ctx.restore();
     return;
   }
@@ -1641,6 +1830,7 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
       ctx.lineTo(x + w / 2 + Math.cos(a) * 16, y + h + 2 + Math.sin(a) * 16);
       ctx.stroke();
     }
+    drawEnemyFace(x, y, w, h, visual, enemy, isBoss);
     ctx.restore();
     return;
   }
@@ -1651,6 +1841,7 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
     ctx.fillStyle = visual.secondary;
     ctx.fillRect(x + 8, y + h - 6, w - 16, 12);
     drawEmissionPorts(x, y, w, h, visual, 3);
+    drawEnemyFace(x, y, w, h, visual, enemy, isBoss);
     ctx.restore();
     return;
   }
@@ -1663,6 +1854,7 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
     ctx.fillRect(x + 12, y + h, w - 24, 6);
     ctx.fillRect(x + w - 12, y + 14, 18, 6);
     drawEmissionPorts(x, y, w, h, visual, 2);
+    drawEnemyFace(x, y, w, h, visual, enemy, isBoss);
     ctx.restore();
     return;
   }
@@ -1677,6 +1869,7 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
       ctx.ellipse(x + w / 2, y + h / 2, 6, 20, (Math.PI * 2 * i) / 3, 0, Math.PI * 2);
       ctx.fill();
     }
+    drawEnemyFace(x, y, w, h, visual, enemy, isBoss);
     ctx.restore();
     return;
   }
@@ -1685,6 +1878,7 @@ function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
   ctx.fill();
   ctx.stroke();
   drawEmissionPorts(x, y, w, h, visual, 1);
+  drawEnemyFace(x, y, w, h, visual, enemy, isBoss);
   ctx.restore();
 }
 
@@ -1824,8 +2018,7 @@ function drawHazard(hazard) {
   ctx.save();
   ctx.globalAlpha = hazard.alpha + 0.12;
   ctx.fillStyle = hazard.color;
-  ctx.strokeStyle = "#07171a";
-  ctx.lineWidth = 3;
+  comicStroke(4, "#07171a");
   if (hazard.shape === "flame") {
     ctx.beginPath();
     ctx.moveTo(hazard.x, hazard.y - hazard.r * 1.7);
@@ -1862,13 +2055,25 @@ function drawHazard(hazard) {
     ctx.ellipse(hazard.x, hazard.y, hazard.r * 1.45, hazard.r * 0.72, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    ctx.globalAlpha = hazard.alpha + 0.28;
+    ctx.fillStyle = "rgba(255, 209, 102, 0.34)";
+    ctx.beginPath();
+    ctx.ellipse(hazard.x + hazard.r * 0.2, hazard.y - hazard.r * 0.08, hazard.r * 0.52, hazard.r * 0.18, -0.16, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.restore();
 }
 
 function drawPlayerBullet(bullet) {
+  ctx.save();
+  ctx.strokeStyle = "#07171a";
+  ctx.lineWidth = bullet.weaponId === "bazooka" ? 18 : bullet.weaponId === "railPulse" ? 9 : (bullet.radius || 7) + 5;
+  ctx.beginPath();
+  ctx.moveTo(bullet.x, bullet.y + (bullet.weaponId === "bazooka" ? 14 : 20));
+  ctx.lineTo(bullet.x, bullet.y - (bullet.weaponId === "bazooka" ? 10 : 18));
+  ctx.stroke();
   ctx.strokeStyle = bullet.color || "#9fffea";
-  ctx.lineWidth = bullet.weaponId === "bazooka" ? 12 : bullet.weaponId === "railPulse" ? 5 : bullet.radius || 7;
+  ctx.lineWidth = bullet.weaponId === "bazooka" ? 11 : bullet.weaponId === "railPulse" ? 5 : bullet.radius || 7;
   ctx.beginPath();
   ctx.moveTo(bullet.x, bullet.y + (bullet.weaponId === "bazooka" ? 14 : 20));
   ctx.lineTo(bullet.x, bullet.y - (bullet.weaponId === "bazooka" ? 10 : 18));
@@ -1881,13 +2086,22 @@ function drawPlayerBullet(bullet) {
     ctx.fill();
     ctx.globalAlpha = 1;
   }
+  ctx.restore();
 }
 
 function drawEnemyBullet(bullet) {
+  ctx.save();
+  comicStroke(3, "#07171a");
   ctx.fillStyle = bullet.color;
   ctx.beginPath();
   ctx.arc(bullet.x, bullet.y, bullet.r, 0, Math.PI * 2);
   ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#fff3d1";
+  ctx.beginPath();
+  ctx.arc(bullet.x - bullet.r * 0.28, bullet.y - bullet.r * 0.25, Math.max(2, bullet.r * 0.28), 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
 }
 
 function drawParticle(p) {
