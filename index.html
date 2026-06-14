@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Eco Defender</title>
-    <link rel="stylesheet" href="src/styles.css">
+    <link rel="stylesheet" href="src/styles.css?v=publish-pass-13">
   </head>
   <body>
     <main class="shell">
@@ -31,13 +31,18 @@
             <strong id="scoreLabel">0</strong>
           </div>
           <div>
-            <span>Skill</span>
+            <span>Waffe</span>
             <strong id="skillLabel">Reinigungspuls</strong>
+          </div>
+          <div>
+            <span>Sound</span>
+            <strong id="soundLabel">an</strong>
           </div>
         </div>
       </section>
 
       <section class="game-wrap" aria-label="Spielbereich">
+        <button id="soundToggle" class="sound-toggle" type="button" aria-pressed="false">Sound an</button>
         <canvas id="game" width="1024" height="640" tabindex="0" aria-label="Eco Defender Spielfeld"></canvas>
         <div id="overlay" class="overlay">
           <div class="briefing">
@@ -54,9 +59,10 @@
         <span>Leertaste halten oder Linksklick halten: schiessen</span>
         <span>Q oder Rechtsklick: Reinigungspuls</span>
         <span>R: Level neu starten</span>
+        <span>M: Sound an/aus</span>
       </section>
     </main>
 
-    <script type="module" src="src/game.js"></script>
+    <script type="module" src="src/game.js?v=publish-pass-13"></script>
   </body>
 </html>
