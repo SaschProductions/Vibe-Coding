@@ -20,14 +20,14 @@ import {
   weaponForLevel,
   upgradeOptions,
   upgradeWeapon
-} from "./gameLogic.js?v=publish-pass-14";
-import { LEVELS as LEVEL_DATA } from "./content/levels.js?v=publish-pass-14";
+} from "./gameLogic.js?v=publish-pass-15";
+import { LEVELS as LEVEL_DATA } from "./content/levels.js?v=publish-pass-15";
 import {
   biomeTheme,
   polluterVisual,
   pollutionVisual
-} from "./visualConfig.js?v=publish-pass-14";
-import { createAudioEngine } from "./audio.js?v=publish-pass-14";
+} from "./visualConfig.js?v=publish-pass-15";
+import { createAudioEngine } from "./audio.js?v=publish-pass-15";
 
 const canvas = document.querySelector("#game");
 const ctx = canvas.getContext("2d");
@@ -43,8 +43,28 @@ const soundToggle = document.querySelector("#soundToggle");
 const W = canvas.width;
 const H = canvas.height;
 
+const LEVEL_BACKDROP_ASSETS = [
+  "assets/levels/level-01-coast.png",
+  "assets/levels/level-02-forest.png",
+  "assets/levels/level-03-reef.png",
+  "assets/levels/level-04-solar.png",
+  "assets/levels/level-05-city.png",
+  "assets/levels/level-06-arctic.png",
+  "assets/levels/level-07-wetland.png",
+  "assets/levels/level-08-mountain.png",
+  "assets/levels/level-09-meadow.png",
+  "assets/levels/level-10-tanker.png"
+];
+
+const levelBackdropImages = LEVEL_BACKDROP_ASSETS.map((src) => {
+  const image = new Image();
+  image.src = src;
+  return image;
+});
+
 const LEVELS = LEVEL_DATA.map((level, index) => ({
   ...level,
+  artAsset: LEVEL_BACKDROP_ASSETS[index],
   top: level.background.sky,
   bottom: level.background.ground,
   training: index === 0,
@@ -646,13 +666,8 @@ function toggleSound() {
 function draw() {
   const level = LEVELS[levelIndex];
   const theme = biomeTheme(level.biome);
-  const gradient = ctx.createLinearGradient(0, 0, 0, H);
-  gradient.addColorStop(0, theme.horizon[0]);
-  gradient.addColorStop(1, theme.horizon[1]);
-  ctx.fillStyle = gradient;
-  ctx.fillRect(0, 0, W, H);
 
-  drawBackdrop(level, theme);
+  drawBackdrop(level, theme, levelIndex);
   drawHud(level);
   hazards.forEach(drawHazard);
   enemies.forEach((enemy) => drawEnemy(enemy, level));
@@ -716,7 +731,21 @@ function drawComicGround(theme) {
   ctx.restore();
 }
 
-function drawBackdrop(level, theme) {
+function drawBackdrop(level, theme, index) {
+  if (drawPaintedLevelBackdrop(index, theme)) {
+    drawPaintedBackdropGrade(theme);
+    drawScenarioProps(theme);
+    drawArcadeTexture(theme, 0.16);
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  const gradient = ctx.createLinearGradient(0, 0, 0, H);
+  gradient.addColorStop(0, theme.horizon[0]);
+  gradient.addColorStop(1, theme.horizon[1]);
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, W, H);
+
   ctx.save();
   ctx.globalAlpha = 0.16;
   ctx.strokeStyle = theme.style.outline;
@@ -742,8 +771,61 @@ function drawBackdrop(level, theme) {
   drawComicGround(theme);
   drawScenarioThreats(level, theme);
   drawScenarioProps(theme);
-  drawArcadeTexture(theme);
+  drawArcadeTexture(theme, 1);
   ctx.globalAlpha = 1;
+}
+
+function drawPaintedLevelBackdrop(index, theme) {
+  const image = levelBackdropImages[index];
+  canvas.dataset.artAsset = LEVEL_BACKDROP_ASSETS[index] || "";
+  if (!image || !image.complete || image.naturalWidth === 0) {
+    canvas.dataset.artLoaded = "false";
+    return false;
+  }
+
+  const sourceRatio = image.naturalWidth / image.naturalHeight;
+  const targetRatio = W / H;
+  let sourceX = 0;
+  let sourceY = 0;
+  let sourceW = image.naturalWidth;
+  let sourceH = image.naturalHeight;
+
+  if (sourceRatio > targetRatio) {
+    sourceW = image.naturalHeight * targetRatio;
+    sourceX = (image.naturalWidth - sourceW) / 2;
+  } else if (sourceRatio < targetRatio) {
+    sourceH = image.naturalWidth / targetRatio;
+    sourceY = (image.naturalHeight - sourceH) / 2;
+  }
+
+  ctx.drawImage(image, sourceX, sourceY, sourceW, sourceH, 0, 0, W, H);
+  ctx.save();
+  ctx.fillStyle = "rgba(2, 10, 12, 0.1)";
+  ctx.fillRect(0, 0, W, H);
+  ctx.restore();
+  canvas.dataset.artLoaded = "true";
+  return true;
+}
+
+function drawPaintedBackdropGrade(theme) {
+  ctx.save();
+  const topShade = ctx.createLinearGradient(0, 0, 0, H);
+  topShade.addColorStop(0, "rgba(1, 8, 10, 0.04)");
+  topShade.addColorStop(0.54, "rgba(1, 8, 10, 0)");
+  topShade.addColorStop(1, "rgba(1, 8, 10, 0.38)");
+  ctx.fillStyle = topShade;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.globalAlpha = 0.14;
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 3;
+  for (let y = 98; y < H - 120; y += 74) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawScenarioThreats(level, theme) {
@@ -1015,9 +1097,9 @@ function drawBarrelSpillBackdrop(theme) {
   ctx.restore();
 }
 
-function drawArcadeTexture(theme) {
+function drawArcadeTexture(theme, strength = 1) {
   ctx.save();
-  ctx.globalAlpha = 0.13;
+  ctx.globalAlpha = 0.13 * strength;
   ctx.fillStyle = theme.accent;
   for (let y = 118; y < H - 130; y += 28) {
     for (let x = (y % 56) / 2; x < W; x += 56) {
@@ -1026,7 +1108,7 @@ function drawArcadeTexture(theme) {
       ctx.fill();
     }
   }
-  ctx.globalAlpha = 0.18;
+  ctx.globalAlpha = 0.18 * strength;
   ctx.strokeStyle = theme.style.outline;
   ctx.lineWidth = 6;
   ctx.strokeRect(10, 88, W - 20, H - 160);
