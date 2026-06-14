@@ -1,19 +1,33 @@
 import {
   applyPollution,
+  applyUpgrade,
+  bossPhase,
   clamp,
+  createUpgradeState,
+  enemyCountForLevel,
+  enemyLayout,
+  enemyMotionProfile,
   createInitialState,
+  difficultyProfile,
   isLevelCleared,
   isLevelFailed,
   pollutionTick,
   pollutionStatus,
-  resultRank
-} from "./gameLogic.js";
-import { LEVELS as LEVEL_DATA } from "./content/levels.js";
+  resultFlow,
+  resultRank,
+  resolveWeaponHit,
+  weaponDamage,
+  weaponForLevel,
+  upgradeOptions,
+  upgradeWeapon
+} from "./gameLogic.js?v=publish-pass-13";
+import { LEVELS as LEVEL_DATA } from "./content/levels.js?v=publish-pass-13";
 import {
   biomeTheme,
   polluterVisual,
   pollutionVisual
-} from "./visualConfig.js";
+} from "./visualConfig.js?v=publish-pass-13";
+import { createAudioEngine } from "./audio.js?v=publish-pass-13";
 
 const canvas = document.querySelector("#game");
 const ctx = canvas.getContext("2d");
@@ -23,6 +37,8 @@ const threatLabel = document.querySelector("#threatLabel");
 const environmentLabel = document.querySelector("#environmentLabel");
 const scoreLabel = document.querySelector("#scoreLabel");
 const skillLabel = document.querySelector("#skillLabel");
+const soundLabel = document.querySelector("#soundLabel");
+const soundToggle = document.querySelector("#soundToggle");
 
 const W = canvas.width;
 const H = canvas.height;
@@ -31,13 +47,19 @@ const LEVELS = LEVEL_DATA.map((level, index) => ({
   ...level,
   top: level.background.sky,
   bottom: level.background.ground,
-  count: index === 0 ? 4 : level.waves.reduce((sum, wave) => sum + wave.count, 0),
   training: index === 0,
   boss: index === LEVEL_DATA.length - 1,
-  pollutionRate: index === 0 ? 0.12 : index === LEVEL_DATA.length - 1 ? 1.4 : 0.22 + level.targetPollution / 90
+  count: enemyCountForLevel({
+    levelIndex: index,
+    levelCount: LEVEL_DATA.length,
+    training: index === 0,
+    boss: index === LEVEL_DATA.length - 1
+  }),
+  pollutionRate: index === 0 ? 0.12 : index === LEVEL_DATA.length - 1 ? 0.98 : 0.22 + level.targetPollution / 90
 }));
 
 const keys = new Set();
+const audio = createAudioEngine();
 let pointerX = W / 2;
 let mouseActive = false;
 let lastTime = 0;
@@ -57,6 +79,9 @@ let message = "";
 let messageTimer = 0;
 let mouseDown = false;
 let levelElapsed = 0;
+let initialEnemies = 0;
+let currentWeapon;
+let upgrades = createUpgradeState();
 
 function resetLevel(nextIndex = levelIndex) {
   levelIndex = clamp(nextIndex, 0, LEVELS.length - 1);
@@ -69,27 +94,80 @@ function resetLevel(nextIndex = levelIndex) {
   cooldown = 0;
   skillCooldown = 0;
   levelElapsed = 0;
-  message = level.training ? "Training: Halte Leertaste oder Linksklick zum Schiessen" : level.intro;
+  currentWeapon = upgradeWeapon(weaponForLevel(levelIndex), upgrades);
+  message = level.training ? `${currentWeapon.name}: Einzelschuss, nah ran und genau zielen` : `${currentWeapon.name} freigeschaltet`;
   messageTimer = 2.4;
   enemies = createEnemies(level);
+  initialEnemies = enemies.length;
   state = createInitialState({ playerHealth: 100, pollution: 0, enemiesRemaining: enemies.length });
   updateLabels();
 }
 
 function createEnemies(level) {
   if (level.boss) {
-    return [{
+    const boss = {
       type: "boss",
+      kind: "megaEmitter",
       x: W / 2 - 170,
-      y: 78,
+      y: 112,
       w: 340,
       h: 86,
       hp: 90,
       maxHp: 90,
       dir: 1,
+      baseX: W / 2 - 170,
+      baseY: 112,
+      phase: 0,
+      motion: "boss",
+      phaseLevel: 1,
+      speedMultiplier: 1,
+      swayAmplitude: 28,
+      swaySpeed: 0.8,
+      verticalDrift: 0,
       leak: 0,
       shoot: 0.8
-    }];
+    };
+    const escortPolluters = level.polluters.filter((polluter) => polluter.type !== "megaEmitter");
+    const escortLayout = enemyLayout({
+      formation: "finalCore",
+      count: Math.max(0, level.count - 1),
+      lane: "mixed",
+      levelIndex,
+      width: W
+    });
+    const escorts = escortLayout.map((point, index) => {
+      const polluter = escortPolluters[index % escortPolluters.length] || { type: "stackBot" };
+      const escortType = index % 3 === 0 ? "shield" : "drone";
+      const motion = enemyMotionProfile({
+        enemyType: escortType,
+        motion: point.motion,
+        levelIndex,
+        levelCount: LEVELS.length
+      });
+      const hp = escortType === "shield" ? 5 : 3;
+      return {
+        type: escortType,
+        kind: polluter.type,
+        x: point.x,
+        y: point.y + 128,
+        w: escortType === "shield" ? 64 : 56,
+        h: 38,
+        hp,
+        maxHp: hp,
+        dir: index % 2 === 0 ? -1 : 1,
+        baseX: point.x,
+        baseY: point.y + 128,
+        phase: index * 0.65,
+        motion: point.motion,
+        speedMultiplier: motion.speedMultiplier,
+        swayAmplitude: motion.swayAmplitude,
+        swaySpeed: motion.swaySpeed,
+        verticalDrift: Math.max(0, motion.verticalDrift - 4),
+        leak: 1.2 + index * 0.12,
+        shoot: 0.8 + index * 0.1
+      };
+    });
+    return [boss, ...escorts];
   }
 
   const result = [];
@@ -106,6 +184,14 @@ function createEnemies(level) {
         hp: 1,
         maxHp: 1,
         dir: i % 2 === 0 ? 1 : -1,
+        baseX: trainingPositions[i] - 29,
+        baseY: i < 2 ? 116 : 178,
+        phase: i * 0.8,
+        motion: "march",
+        speedMultiplier: 0,
+        swayAmplitude: 0,
+        swaySpeed: 0,
+        verticalDrift: 0,
         leak: 4 + Math.random() * 2,
         shoot: 5 + Math.random() * 2
       });
@@ -113,24 +199,49 @@ function createEnemies(level) {
     return result;
   }
 
-  const cols = Math.min(6, Math.ceil(level.count / 2));
   const polluters = level.polluters.length > 0 ? level.polluters : [{ type: "smogDrone" }];
+  const primaryWave = level.waves[0] || { formation: "line", lane: "mixed" };
+  const denseLine = primaryWave.formation === "line" && level.count > 8;
+  const layout = enemyLayout({
+    formation: denseLine ? "stagger" : primaryWave.formation,
+    count: level.count,
+    lane: denseLine ? "mixed" : primaryWave.lane || "mixed",
+    levelIndex,
+    width: W
+  });
   for (let i = 0; i < level.count; i += 1) {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
+    const point = layout[i];
     const polluter = polluters[i % polluters.length];
+    const enemyType = point.type;
+    const openingGrace = 1.4 + Math.min(levelIndex, 8) * 0.06;
+    const formationStagger = (i % 6) * 0.18;
+    const motion = enemyMotionProfile({
+      enemyType,
+      motion: point.motion,
+      levelIndex,
+      levelCount: LEVELS.length
+    });
+    const hp = enemyType === "polluter" ? 4 + Math.floor(levelIndex / 4) : enemyType === "shield" ? 3 + Math.floor(levelIndex / 5) : 2 + Math.floor(levelIndex / 7);
     result.push({
-      type: i % 5 === 0 ? "polluter" : i % 3 === 0 ? "shield" : "drone",
+      type: enemyType,
       kind: polluter.type,
-      x: 132 + col * 138,
-      y: 88 + row * 76,
-      w: 58,
-      h: 36,
-      hp: level.training ? 1 : i % 5 === 0 ? 4 : i % 3 === 0 ? 3 : 2,
-      maxHp: level.training ? 1 : i % 5 === 0 ? 4 : i % 3 === 0 ? 3 : 2,
-      dir: 1,
-      leak: level.training ? 3 + Math.random() * 2 : Math.random() * 1.8,
-      shoot: level.training ? 4 + Math.random() * 2 : Math.random() * 1.5
+      x: point.x,
+      y: point.y,
+      w: enemyType === "polluter" ? 66 : enemyType === "shield" ? 62 : 56,
+      h: enemyType === "polluter" ? 42 : 36,
+      hp,
+      maxHp: hp,
+      dir: i % 2 === 0 ? 1 : -1,
+      baseX: point.x,
+      baseY: point.y,
+      phase: i * 0.73,
+      motion: point.motion,
+      speedMultiplier: motion.speedMultiplier,
+      swayAmplitude: motion.swayAmplitude,
+      swaySpeed: motion.swaySpeed,
+      verticalDrift: motion.verticalDrift,
+      leak: openingGrace + 0.7 + formationStagger + Math.random() * 1.4,
+      shoot: openingGrace + formationStagger + Math.random() * 1.25
     });
   }
   return result;
@@ -138,6 +249,7 @@ function createEnemies(level) {
 
 function beginLevel(index, resetScore = false) {
   if (resetScore) score = 0;
+  audio.unlock();
   running = true;
   overlay.hidden = true;
   canvas.focus();
@@ -147,6 +259,8 @@ function beginLevel(index, resetScore = false) {
 }
 
 function startGame() {
+  audio.unlock();
+  upgrades = createUpgradeState();
   beginLevel(0, true);
 }
 
@@ -160,7 +274,7 @@ function briefingMarkup(level, action, buttonText) {
         <div><span>Umweltziel</span><strong>${level.metricLabel}</strong></div>
         <div><span>Auftrag</span><strong>${level.training ? "Training und erste Neutralisierung" : "Bedrohung stoppen"}</strong></div>
       </div>
-      <p>${level.training ? "Halte Leertaste oder Linksklick zum Schiessen. Nutze Q fuer den Reinigungspuls." : level.intro}</p>
+      <p>${level.training ? "Level 1 startet bewusst mit Einzelschuss-Schrottflinte. Halte Leertaste oder Linksklick zum Schiessen. Nutze Q fuer den Reinigungspuls." : level.intro}</p>
       <button type="button" data-action="${action}">${buttonText}</button>
     </div>`;
 }
@@ -174,18 +288,19 @@ function showLevelBriefing(nextIndex = levelIndex, action = "start", buttonText 
 function showResult(won, level, bonus = 0) {
   const status = pollutionStatus(state.pollution);
   const rank = won ? resultRank(state) : "-";
-  const title = won ? `${level.name} gesichert` : state.pollution >= 100 ? "Umweltkollaps" : "Einsatzfahrzeug kritisch";
-  const body = won
-    ? `${level.metricLabel}: ${Math.round(100 - state.pollution)}% stabil. Rang ${rank}. Bonus ${bonus}.`
+  const flow = resultFlow({ won, levelIndex, levelCount: LEVELS.length });
+  const title = flow.final ? "Kampagne abgeschlossen" : won ? `${level.name} gesichert` : state.pollution >= 100 ? "Umweltkollaps" : "Einsatzfahrzeug kritisch";
+  const body = flow.final
+    ? `Alle ${LEVELS.length} Einsaetze abgeschlossen. ${level.metricLabel}: ${Math.round(100 - state.pollution)}% stabil. Finaler Rang ${rank}. Gesamt-Score ${score}.`
+    : won
+      ? `${level.metricLabel}: ${Math.round(100 - state.pollution)}% stabil. Rang ${rank}. Bonus ${bonus}.`
     : state.pollution >= 100
       ? `${level.threat} war zu lange aktiv. ${level.metricLabel} ist gekippt.`
       : "Dein Schild ist gefallen. Setze den Reinigungspuls frueher ein und bleib in Bewegung.";
-  const action = won && levelIndex < LEVELS.length - 1 ? "next" : "restart";
-  const buttonText = won && levelIndex < LEVELS.length - 1 ? "Naechster Einsatz" : "Neu starten";
 
   overlay.innerHTML = `
     <div class="briefing result">
-      <p class="eyebrow">${won ? "Einsatz erfolgreich" : "Einsatz fehlgeschlagen"}</p>
+      <p class="eyebrow">${flow.final ? "Game Over - Erde verteidigt" : won ? "Einsatz erfolgreich" : "Einsatz fehlgeschlagen"}</p>
       <h2>${title}</h2>
       <div class="briefing-grid">
         <div><span>Rang</span><strong>${rank}</strong></div>
@@ -193,9 +308,34 @@ function showResult(won, level, bonus = 0) {
         <div><span>Score</span><strong>${score}</strong></div>
       </div>
       <p>${body}</p>
-      <button type="button" data-action="${action}">${buttonText}</button>
+      <button type="button" data-action="${won && !flow.final ? "upgrade" : flow.action}">${won && !flow.final ? "Upgrade waehlen" : flow.buttonText}</button>
     </div>`;
   overlay.hidden = false;
+}
+
+function showUpgradeChoice() {
+  const options = upgradeOptions(levelIndex);
+  overlay.innerHTML = `
+    <div class="briefing result">
+      <p class="eyebrow">Level-Up</p>
+      <h2>System verbessern</h2>
+      <p>Waehle ein Upgrade fuer den naechsten Einsatz. Waffen werden staerker, aber Gegner eskalieren weiter.</p>
+      <div class="upgrade-grid">
+        ${options.map((upgrade) => `
+          <button class="upgrade-card" type="button" data-upgrade="${upgrade.id}">
+            <strong>${upgrade.name}</strong>
+            <span>${upgrade.description}</span>
+          </button>
+        `).join("")}
+      </div>
+    </div>`;
+  overlay.hidden = false;
+}
+
+function chooseUpgrade(id) {
+  upgrades = applyUpgrade(upgrades, id);
+  audio.play("levelClear");
+  beginLevel(levelIndex + 1, false);
 }
 
 function loop(now) {
@@ -231,6 +371,7 @@ function update(dt) {
 
   const pollutionStep = pollutionTick({ pollutionRate: level.pollutionRate, hazardCount: hazards.length, dt });
   applyPollution(state, pollutionStep);
+  if (state.pollution >= 72 || state.playerHealth <= 28) audio.playWarning();
   const failedByHealth = state.playerHealth <= 0;
   const failedByPollution = state.pollution >= 100 && levelElapsed > 18;
   if (failedByHealth || failedByPollution) endLevel(false);
@@ -239,29 +380,64 @@ function update(dt) {
 }
 
 function updateEnemies(level, dt) {
-  const speed = level.training ? 0 : level.boss ? 86 : 42 + levelIndex * 4;
+  const difficulty = difficultyProfile({
+    levelIndex,
+    levelCount: LEVELS.length,
+    enemiesRemaining: state.enemiesRemaining,
+    initialEnemies,
+    boss: level.boss,
+    training: level.training
+  });
   for (const enemy of enemies) {
-    enemy.x += enemy.dir * speed * dt;
-    if (enemy.x < 34 || enemy.x + enemy.w > W - 34) {
+    const speed = difficulty.movementSpeed * (enemy.speedMultiplier ?? 1);
+    enemy.baseX += enemy.dir * speed * dt;
+    enemy.x = enemy.baseX + Math.sin(levelElapsed * (enemy.swaySpeed || 0) + (enemy.phase || 0)) * (enemy.swayAmplitude || 0);
+    enemy.y = enemy.baseY + Math.max(0, levelElapsed - 2) * (enemy.verticalDrift || 0);
+    const atEdge = enemy.x < 34 || enemy.x + enemy.w > W - 34;
+    if (atEdge && !enemy.edgeLock) {
       enemy.dir *= -1;
-      enemy.y += level.boss ? 0 : 12;
+      enemy.baseX = clamp(enemy.baseX, 34, W - 34 - enemy.w);
+      enemy.baseY += difficulty.descent;
+      enemy.y = enemy.baseY;
+    }
+    enemy.edgeLock = atEdge ? true : enemy.x > 50 && enemy.x + enemy.w < W - 50 ? false : enemy.edgeLock;
+
+    if (!enemy.breached && enemy.y + enemy.h >= difficulty.breachY) {
+      enemy.breached = true;
+      state.playerHealth = clamp(state.playerHealth - difficulty.breachDamage, 0, 100);
+      applyPollution(state, difficulty.breachDamage * 0.7);
+      audio.play("warning");
+      message = level.boss ? "Bossdruck kritisch" : "Formation zu nah an der Basis";
+      messageTimer = 1.4;
+      burst(enemy.x + enemy.w / 2, enemy.y + enemy.h, "#ff754a", 14);
     }
 
     enemy.leak -= dt;
     if (enemy.leak <= 0) {
-      enemy.leak = enemy.type === "boss" ? 0.28 : level.training ? 3.2 : enemy.type === "polluter" ? 0.75 : 1.8;
+      const phase = enemy.type === "boss" ? bossPhase({ hp: enemy.hp, maxHp: enemy.maxHp }) : null;
+      enemy.leak = enemy.type === "boss"
+        ? difficulty.leakPolluter * phase.leakMultiplier
+        : enemy.type === "polluter" ? difficulty.leakPolluter : difficulty.leakDrone;
       spawnHazard(enemy, level);
+      if (phase && phase.phase > (enemy.phaseLevel || 1)) {
+        enemy.phaseLevel = phase.phase;
+        message = phase.label;
+        messageTimer = 1.7;
+        burst(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, "#ff754a", 34);
+      }
     }
 
     enemy.shoot -= dt;
     if (enemy.shoot <= 0) {
-      enemy.shoot = enemy.type === "boss" ? 0.55 : level.training ? 3.5 + Math.random() * 2 : 1.4 + Math.random() * 1.4;
+      const phase = enemy.type === "boss" ? bossPhase({ hp: enemy.hp, maxHp: enemy.maxHp }) : null;
+      enemy.shoot = (difficulty.shootMin + Math.random() * difficulty.shootJitter) * (phase ? phase.shootMultiplier : 1);
       enemyBullets.push({
         x: enemy.x + enemy.w / 2,
         y: enemy.y + enemy.h,
         r: enemy.type === "boss" ? 8 : 5,
-        vy: enemy.type === "boss" ? 210 : 170,
-        color: enemy.type === "shield" ? "#ffd166" : "#ff754a"
+        vy: difficulty.enemyBulletSpeed,
+        color: enemy.type === "shield" ? "#ffd166" : "#ff754a",
+        damage: enemy.type === "boss" ? 3 : enemy.type === "shield" ? 3.4 : 4
       });
     }
   }
@@ -269,6 +445,8 @@ function updateEnemies(level, dt) {
 
 function spawnHazard(enemy, level) {
   const visual = pollutionVisual(level.metricLabel);
+  const maxHazards = level.boss ? 72 : 88;
+  if (hazards.length >= maxHazards) hazards.shift();
   hazards.push({
     x: enemy.x + enemy.w / 2,
     y: enemy.y + enemy.h + 6,
@@ -281,23 +459,19 @@ function spawnHazard(enemy, level) {
 }
 
 function updateBullets(dt) {
-  for (const bullet of bullets) bullet.y -= bullet.vy * dt;
+  for (const bullet of bullets) {
+    bullet.x += (bullet.vx || 0) * dt;
+    bullet.y -= bullet.vy * dt;
+    bullet.distance += Math.hypot((bullet.vx || 0) * dt, bullet.vy * dt);
+  }
   for (const bullet of enemyBullets) bullet.y += bullet.vy * dt;
-  bullets = bullets.filter((bullet) => bullet.y > -20);
+  bullets = bullets.filter((bullet) => bullet.y > -20 && bullet.distance <= bullet.range);
   enemyBullets = enemyBullets.filter((bullet) => bullet.y < H + 20);
 
   for (const bullet of bullets) {
     for (const enemy of enemies) {
-      if (!bullet.dead && rectPoint(enemy, bullet.x, bullet.y, 18)) {
-        bullet.dead = true;
-        enemy.hp -= bullet.power;
-        burst(bullet.x, bullet.y, "#41e5b4", 6);
-        if (enemy.hp <= 0) {
-          enemy.dead = true;
-          score += enemy.type === "boss" ? 2500 : enemy.type === "polluter" ? 300 : 180;
-          state.enemiesRemaining -= 1;
-          burst(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, "#ffd166", 18);
-        }
+      if (!bullet.dead && rectPoint(enemy, bullet.x, bullet.y, bullet.radius + 9)) {
+        handlePlayerBulletHit(bullet, enemy);
       }
     }
   }
@@ -305,7 +479,8 @@ function updateBullets(dt) {
   for (const bullet of enemyBullets) {
     if (!bullet.dead && rectCircle(player, bullet.x, bullet.y, bullet.r)) {
       bullet.dead = true;
-      state.playerHealth = clamp(state.playerHealth - 4, 0, 100);
+      state.playerHealth = clamp(state.playerHealth - (bullet.damage || 4), 0, 100);
+      audio.play("playerHit");
       burst(player.x, player.y, "#ff754a", 10);
     }
   }
@@ -313,6 +488,65 @@ function updateBullets(dt) {
   enemies = enemies.filter((enemy) => !enemy.dead);
   bullets = bullets.filter((bullet) => !bullet.dead);
   enemyBullets = enemyBullets.filter((bullet) => !bullet.dead);
+}
+
+function handlePlayerBulletHit(bullet, enemy) {
+  const hitX = enemy.x + enemy.w / 2;
+  const hitY = enemy.y + enemy.h / 2;
+  const targets = bullet.blastRadius > 0
+    ? enemies
+      .filter((candidate) => !candidate.dead && Math.hypot(candidate.x + candidate.w / 2 - hitX, candidate.y + candidate.h / 2 - hitY) <= bullet.blastRadius)
+      .slice(0, bullet.maxTargets)
+    : [enemy];
+
+  for (const target of targets) {
+    damageEnemy(target, bullet);
+  }
+
+  if (bullet.blastRadius > 0) {
+    burst(hitX, hitY, "#ffd166", 24);
+    audio.play("enemyDestroyed");
+  } else {
+    audio.play("enemyHit");
+    burst(bullet.x, bullet.y, bullet.color, 6);
+  }
+
+  if (bullet.pollutionReduction) {
+    state.pollution = clamp(state.pollution - bullet.pollutionReduction, 0, 100);
+  }
+
+  if (bullet.pierce > 0) {
+    bullet.pierce -= 1;
+  } else {
+    bullet.dead = true;
+  }
+}
+
+function damageEnemy(enemy, bullet) {
+  const result = resolveWeaponHit({
+    hp: enemy.hp,
+    weapon: { id: bullet.weaponId, power: bullet.power },
+    enemyKind: enemy.kind,
+    enemyType: enemy.type
+  });
+  enemy.hp = result.hp;
+  if (bullet.chain && result.destroyed) {
+    const nearby = enemies.find((candidate) => candidate !== enemy && !candidate.dead && Math.hypot(candidate.x - enemy.x, candidate.y - enemy.y) < 110);
+    if (nearby) {
+      nearby.hp -= 0.85;
+      finalizeEnemyIfDestroyed(nearby);
+    }
+  }
+  finalizeEnemyIfDestroyed(enemy);
+}
+
+function finalizeEnemyIfDestroyed(enemy) {
+  if (enemy.hp > 0 || enemy.dead) return;
+  enemy.dead = true;
+  score += enemy.type === "boss" ? 2500 : enemy.type === "polluter" ? 300 : 180;
+  state.enemiesRemaining -= 1;
+  audio.play("enemyDestroyed");
+  burst(enemy.x + enemy.w / 2, enemy.y + enemy.h / 2, "#ffd166", 18);
 }
 
 function updateHazards(dt) {
@@ -337,16 +571,51 @@ function updateParticles(dt) {
 
 function fire() {
   if (cooldown > 0 || !running) return;
-  cooldown = 0.16;
-  bullets.push({ x: player.x - 26, y: player.y - 22, vy: 600, power: 1 });
-  bullets.push({ x: player.x, y: player.y - 24, vy: 620, power: 1 });
-  bullets.push({ x: player.x + 26, y: player.y - 22, vy: 600, power: 1 });
+  cooldown = currentWeapon.cooldown;
+  audio.play("shoot");
+  spawnWeaponProjectiles(currentWeapon);
   burst(player.x, player.y - 18, "#9fffea", 3);
+}
+
+function spawnWeaponProjectiles(weapon) {
+  const layouts = {
+    single: [{ x: 0, vx: 0 }],
+    double: [{ x: -18, vx: 0 }, { x: 18, vx: 0 }],
+    triple: [{ x: -28, vx: -30 }, { x: 0, vx: 0 }, { x: 28, vx: 30 }],
+    wide: [{ x: -22, vx: -75 }, { x: 22, vx: 75 }],
+    beam: [{ x: 0, vx: 0 }],
+    rail: [{ x: 0, vx: 0 }],
+    rocket: [{ x: 0, vx: 0 }],
+    chain: [{ x: -18, vx: -20 }, { x: 18, vx: 20 }],
+    hybrid: [{ x: -24, vx: -28 }, { x: 0, vx: 0 }, { x: 24, vx: 28 }]
+  };
+  const pattern = layouts[weapon.pattern] || layouts.single;
+  for (const shot of pattern) {
+    bullets.push({
+      x: player.x + shot.x,
+      y: player.y - 24,
+      vx: shot.vx,
+      vy: weapon.speed,
+      power: weapon.power,
+      radius: weapon.radius,
+      range: weapon.range,
+      distance: 0,
+      pierce: weapon.pierce,
+      blastRadius: weapon.blastRadius,
+      maxTargets: weapon.maxTargets,
+      weaponId: weapon.id,
+      chain: weapon.chain,
+      pollutionReduction: weapon.pollutionReduction || 0,
+      color: weapon.id === "bazooka" ? "#ffd166" : weapon.id === "railPulse" ? "#dffdf5" : "#9fffea"
+    });
+  }
 }
 
 function useSkill() {
   if (skillCooldown > 0 || !running) return;
+  audio.unlock();
   skillCooldown = 5.8;
+  audio.play("skill");
   state.pollution = clamp(state.pollution - 18, 0, 100);
   hazards = hazards.filter((hazard) => Math.hypot(hazard.x - player.x, hazard.y - player.y) > 190);
   burst(player.x, player.y, "#9fffea", 32);
@@ -362,7 +631,16 @@ function endLevel(won) {
     bonus = Math.round((100 - state.pollution) * 15 + state.playerHealth * 8);
     score += bonus;
   }
+  const flow = resultFlow({ won, levelIndex, levelCount: LEVELS.length });
+  audio.play(flow.final ? "campaignComplete" : won ? "levelClear" : "levelFail");
   showResult(won, level, bonus);
+  updateDebugState();
+}
+
+function toggleSound() {
+  audio.toggleMute();
+  updateLabels();
+  canvas.focus();
 }
 
 function draw() {
@@ -396,12 +674,17 @@ function draw() {
 }
 
 function drawBackdrop(level, theme) {
-  ctx.globalAlpha = 0.18;
-  ctx.fillStyle = theme.detail;
+  ctx.save();
+  ctx.globalAlpha = 0.2;
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 3;
   for (let y = 98; y < H - 120; y += 74) {
-    ctx.fillRect(0, y, W, 1);
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y);
+    ctx.stroke();
   }
-  ctx.globalAlpha = 1;
+  ctx.restore();
 
   if (theme.surface === "city" || theme.surface === "industrial") drawCityBackdrop(theme);
   else if (theme.surface === "forest") drawForestBackdrop(theme);
@@ -413,11 +696,485 @@ function drawBackdrop(level, theme) {
   else if (theme.surface === "wetland") drawWetlandBackdrop(theme);
   else drawWaterBackdrop(theme);
 
+  drawScenarioThreats(level, theme);
+  drawScenarioProps(theme);
+  drawArcadeTexture(theme);
   ctx.globalAlpha = 1;
 }
 
+function drawScenarioThreats(level, theme) {
+  ctx.save();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = theme.style.outline;
+
+  if (theme.surface === "water") {
+    drawBackdropTanker(64, 262, 560, 118, theme);
+  } else if (theme.surface === "forest") {
+    drawBackdropHarvester(638, 348, 220, 96, theme);
+    drawStumps(theme);
+  } else if (theme.surface === "city" || theme.surface === "industrial") {
+    drawSmogStacks(theme);
+  } else if (theme.surface === "meadow") {
+    drawSprayerTracks(theme);
+  } else if (theme.surface === "reef") {
+    drawPlasticBloom(theme);
+  } else if (theme.surface === "solar") {
+    drawDustRigBackdrop(theme);
+  } else if (theme.surface === "ice") {
+    drawHeatRelayBackdrop(theme);
+  } else if (theme.surface === "wetland") {
+    drawToxicPipeBackdrop(theme);
+  } else if (theme.surface === "mountain") {
+    drawBarrelSpillBackdrop(theme);
+  }
+
+  ctx.restore();
+}
+
+function drawBackdropTanker(x, y, w, h, theme) {
+  ctx.save();
+  ctx.globalAlpha = 0.82;
+  ctx.fillStyle = "#252b2f";
+  ctx.strokeStyle = theme.style.outline;
+  ctx.beginPath();
+  ctx.moveTo(x, y + h * 0.44);
+  ctx.lineTo(x + w - 42, y + h * 0.34);
+  ctx.lineTo(x + w, y + h * 0.58);
+  ctx.lineTo(x + w - 58, y + h);
+  ctx.lineTo(x + 34, y + h);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#dffdf5";
+  roundRect(x + w * 0.64, y + 4, 112, 48, 7);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#253238";
+  for (let i = 0; i < 4; i += 1) ctx.fillRect(x + w * 0.67 + i * 22, y + 18, 12, 12);
+  ctx.fillStyle = "#fff3d1";
+  ctx.strokeStyle = theme.style.outline;
+  roundRect(x + 36, y + 12, 104, 32, 7);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#07171a";
+  ctx.font = "900 18px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText("OIL", x + 88, y + 34);
+  ctx.fillStyle = "#101010";
+  for (let i = 0; i < 5; i += 1) {
+    ctx.beginPath();
+    ctx.ellipse(x + 90 + i * 92, y + h + 16 + (i % 2) * 13, 92, 22, 0.08, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "rgba(255, 209, 102, 0.38)";
+    ctx.beginPath();
+    ctx.ellipse(x + 104 + i * 92, y + h + 13 + (i % 2) * 13, 44, 7, -0.1, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#101010";
+  }
+  ctx.restore();
+}
+
+function drawBackdropHarvester(x, y, w, h, theme) {
+  ctx.save();
+  ctx.globalAlpha = 0.38;
+  ctx.fillStyle = "#5b4635";
+  ctx.strokeStyle = theme.style.outline;
+  roundRect(x, y + 18, w, h - 24, 10);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#ffd166";
+  ctx.beginPath();
+  ctx.arc(x + 52, y + h - 8, 28, 0, Math.PI * 2);
+  ctx.arc(x + w - 48, y + h - 8, 22, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = "#101820";
+  for (let i = 0; i < 10; i += 1) {
+    const a = (Math.PI * 2 * i) / 10;
+    ctx.beginPath();
+    ctx.moveTo(x + 52, y + h - 8);
+    ctx.lineTo(x + 52 + Math.cos(a) * 36, y + h - 8 + Math.sin(a) * 36);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawStumps(theme) {
+  ctx.save();
+  ctx.globalAlpha = 0.48;
+  ctx.fillStyle = "#6b4a32";
+  ctx.strokeStyle = theme.style.outline;
+  for (let x = 62; x < W - 80; x += 138) {
+    roundRect(x, 484 + (x % 3) * 9, 34, 28, 7);
+    ctx.fill();
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawSmogStacks(theme) {
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = "#202735";
+  ctx.strokeStyle = theme.style.outline;
+  for (let x = 90; x < W; x += 190) {
+    ctx.fillRect(x, 302, 42, 146);
+    ctx.strokeRect(x, 302, 42, 146);
+    ctx.fillRect(x + 58, 342, 34, 106);
+    ctx.strokeRect(x + 58, 342, 34, 106);
+    ctx.fillStyle = "rgba(255, 117, 74, 0.42)";
+    ctx.beginPath();
+    ctx.ellipse(x + 22, 284, 52, 18, 0, 0, Math.PI * 2);
+    ctx.ellipse(x + 76, 324, 42, 15, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#202735";
+  }
+  ctx.restore();
+}
+
+function drawSprayerTracks(theme) {
+  ctx.save();
+  ctx.globalAlpha = 0.44;
+  ctx.strokeStyle = "#a4e04d";
+  ctx.lineWidth = 8;
+  for (let y = 428; y < 550; y += 34) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    for (let x = 0; x <= W; x += 80) ctx.quadraticCurveTo(x + 34, y - 18, x + 80, y);
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#556b2f";
+  ctx.strokeStyle = theme.style.outline;
+  roundRect(684, 354, 174, 58, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#a4e04d";
+  ctx.fillRect(824, 376, 48, 8);
+  ctx.restore();
+}
+
+function drawPlasticBloom(theme) {
+  ctx.save();
+  ctx.globalAlpha = 0.64;
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 4;
+  for (let x = 130; x < W - 80; x += 130) {
+    ctx.fillStyle = x % 260 === 0 ? "#d66cff" : "#ff9f80";
+    ctx.save();
+    ctx.translate(x, 430 + (x % 3) * 26);
+    ctx.rotate((x % 2 ? -1 : 1) * 0.24);
+    roundRect(-38, -16, 76, 32, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#eff8f4";
+    ctx.fillRect(-22, -5, 44, 10);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawDustRigBackdrop(theme) {
+  ctx.save();
+  ctx.globalAlpha = 0.68;
+  ctx.fillStyle = "#7b5537";
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 4;
+  roundRect(640, 330, 230, 82, 10);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#ffd166";
+  ctx.beginPath();
+  ctx.arc(690, 414, 30, 0, Math.PI * 2);
+  ctx.arc(816, 414, 24, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(201, 170, 82, 0.82)";
+  ctx.lineWidth = 12;
+  for (let y = 438; y < 540; y += 34) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(W, y + 16);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawHeatRelayBackdrop(theme) {
+  ctx.save();
+  ctx.globalAlpha = 0.72;
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 4;
+  ctx.fillStyle = "#516a86";
+  for (let x = 118; x < W - 80; x += 210) {
+    roundRect(x, 342, 76, 98, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#ff8a4c";
+    ctx.beginPath();
+    ctx.arc(x + 38, 376, 20, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#516a86";
+  }
+  ctx.strokeStyle = "rgba(255, 138, 76, 0.7)";
+  ctx.lineWidth = 5;
+  for (let x = 40; x < W; x += 130) {
+    ctx.beginPath();
+    ctx.moveTo(x, 482);
+    ctx.lineTo(x + 86, 444);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function drawToxicPipeBackdrop(theme) {
+  ctx.save();
+  ctx.globalAlpha = 0.7;
+  ctx.fillStyle = "#3a5f50";
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 4;
+  for (let x = 80; x < W; x += 240) {
+    ctx.fillRect(x, 356, 170, 34);
+    ctx.strokeRect(x, 356, 170, 34);
+    ctx.fillRect(x + 136, 356, 34, 92);
+    ctx.strokeRect(x + 136, 356, 34, 92);
+    ctx.fillStyle = "#8aff62";
+    ctx.beginPath();
+    ctx.ellipse(x + 154, 468, 70, 20, 0.08, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#3a5f50";
+  }
+  ctx.restore();
+}
+
+function drawBarrelSpillBackdrop(theme) {
+  ctx.save();
+  ctx.globalAlpha = 0.72;
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 4;
+  for (let x = 122; x < W - 80; x += 170) {
+    ctx.fillStyle = "#2a2a24";
+    ctx.save();
+    ctx.translate(x, 420 + (x % 2) * 28);
+    ctx.rotate(-0.26);
+    roundRect(-38, -24, 76, 48, 15);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#050505";
+    ctx.fillRect(-26, -6, 52, 12);
+    ctx.restore();
+    ctx.fillStyle = "#101010";
+    ctx.beginPath();
+    ctx.ellipse(x + 34, 466 + (x % 2) * 28, 72, 18, 0.1, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawArcadeTexture(theme) {
+  ctx.save();
+  ctx.globalAlpha = 0.13;
+  ctx.fillStyle = theme.accent;
+  for (let y = 118; y < H - 130; y += 28) {
+    for (let x = (y % 56) / 2; x < W; x += 56) {
+      ctx.beginPath();
+      ctx.arc(x, y, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  ctx.globalAlpha = 0.18;
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 6;
+  ctx.strokeRect(10, 88, W - 20, H - 160);
+  ctx.restore();
+}
+
+function drawScenarioProps(theme) {
+  if (theme.props.includes("oil-slick")) {
+    ctx.save();
+    ctx.globalAlpha = 0.72;
+    ctx.fillStyle = "#101010";
+    for (let x = 150; x < W - 80; x += 118) {
+      ctx.beginPath();
+      ctx.ellipse(x, 468 + (x % 2) * 36, 58, 19, -0.12, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "rgba(255, 209, 102, 0.5)";
+      ctx.beginPath();
+      ctx.ellipse(x + 10, 468 + (x % 2) * 36, 32, 8, 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = "#101010";
+    }
+    ctx.restore();
+  }
+
+  if (theme.props.includes("buoy")) {
+    for (let x = 84; x < W; x += 280) drawBuoy(x, 530, theme);
+  }
+
+  if (theme.props.includes("smog")) {
+    ctx.save();
+    ctx.globalAlpha = 0.24;
+    ctx.fillStyle = "#3f4649";
+    for (let x = 60; x < W; x += 170) {
+      ctx.beginPath();
+      ctx.ellipse(x, 126, 58, 20, 0, 0, Math.PI * 2);
+      ctx.ellipse(x + 42, 110, 48, 18, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  if (theme.props.includes("sparks")) {
+    ctx.save();
+    ctx.globalAlpha = 0.72;
+    ctx.fillStyle = "#ff754a";
+    for (let i = 0; i < 18; i += 1) {
+      const x = 44 + i * 54;
+      const y = 392 + ((i * 29) % 112);
+      ctx.beginPath();
+      ctx.arc(x, y, 3 + (i % 3), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  if (theme.props.includes("bubbles")) {
+    ctx.save();
+    ctx.globalAlpha = 0.46;
+    ctx.strokeStyle = "#ecfbff";
+    ctx.lineWidth = 3;
+    for (let i = 0; i < 20; i += 1) {
+      const x = 44 + i * 52;
+      const y = 360 + ((i * 41) % 170);
+      ctx.beginPath();
+      ctx.arc(x, y, 6 + (i % 4) * 3, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  if (theme.props.includes("heat")) {
+    ctx.save();
+    ctx.globalAlpha = 0.34;
+    ctx.strokeStyle = "#ffe7a3";
+    ctx.lineWidth = 4;
+    for (let x = 42; x < W; x += 72) {
+      ctx.beginPath();
+      ctx.moveTo(x, 352);
+      for (let y = 352; y < 530; y += 28) ctx.quadraticCurveTo(x + 18, y + 12, x, y + 28);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  if (theme.props.includes("ice-cracks")) {
+    ctx.save();
+    ctx.globalAlpha = 0.58;
+    ctx.strokeStyle = "#376070";
+    ctx.lineWidth = 4;
+    for (let x = 62; x < W - 80; x += 170) {
+      ctx.beginPath();
+      ctx.moveTo(x, 458);
+      ctx.lineTo(x + 38, 486);
+      ctx.lineTo(x + 18, 522);
+      ctx.lineTo(x + 72, 554);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  if (theme.props.includes("toxic-stream")) {
+    ctx.save();
+    ctx.globalAlpha = 0.62;
+    ctx.strokeStyle = "#8aff62";
+    ctx.lineWidth = 18;
+    ctx.beginPath();
+    ctx.moveTo(-40, 520);
+    for (let x = 0; x <= W + 80; x += 90) ctx.quadraticCurveTo(x + 35, 482, x + 90, 520);
+    ctx.stroke();
+    ctx.globalAlpha = 0.42;
+    ctx.strokeStyle = "#f7b267";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if (theme.props.includes("flowers")) {
+    ctx.save();
+    ctx.globalAlpha = 0.72;
+    for (let x = 28; x < W; x += 38) {
+      const y = 488 + (x % 5) * 12;
+      ctx.fillStyle = x % 76 === 0 ? "#fff2a8" : "#f7b267";
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.arc(x + 6, y + 3, 4, 0, Math.PI * 2);
+      ctx.arc(x - 5, y + 4, 4, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#386641";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x, y + 5);
+      ctx.lineTo(x, y + 20);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  if (theme.props.includes("stream")) {
+    ctx.save();
+    ctx.globalAlpha = 0.7;
+    ctx.strokeStyle = "#9fe9ff";
+    ctx.lineWidth = 16;
+    ctx.beginPath();
+    ctx.moveTo(-30, 536);
+    for (let x = 0; x <= W + 80; x += 100) ctx.quadraticCurveTo(x + 50, 492, x + 100, 536);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  if (theme.props.includes("warning-grid")) {
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = "#ffcc4d";
+    ctx.lineWidth = 4;
+    for (let x = -40; x < W; x += 64) {
+      ctx.beginPath();
+      ctx.moveTo(x, 506);
+      ctx.lineTo(x + 88, 568);
+      ctx.stroke();
+    }
+    ctx.strokeStyle = "#121722";
+    ctx.lineWidth = 3;
+    for (let y = 498; y < 578; y += 28) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(W, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function drawBuoy(x, y, theme) {
+  ctx.save();
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 3;
+  ctx.fillStyle = "#ff754a";
+  ctx.beginPath();
+  ctx.moveTo(x, y - 26);
+  ctx.lineTo(x - 14, y + 16);
+  ctx.lineTo(x + 14, y + 16);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#efffff";
+  ctx.fillRect(x - 10, y - 5, 20, 8);
+  ctx.restore();
+}
+
 function drawWaterBackdrop(theme) {
-  ctx.globalAlpha = 0.3;
+  ctx.save();
+  ctx.globalAlpha = 0.48;
   ctx.fillStyle = theme.detail;
   for (let x = -40; x < W; x += 150) {
     ctx.beginPath();
@@ -427,6 +1184,16 @@ function drawWaterBackdrop(theme) {
     ctx.ellipse(x + 122, 506, 110, 12, 0, 0, Math.PI * 2);
     ctx.fill();
   }
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 3;
+  ctx.globalAlpha = 0.2;
+  for (let y = 410; y < 560; y += 38) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    for (let x = 0; x <= W; x += 42) ctx.quadraticCurveTo(x + 18, y - 9, x + 42, y);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function drawCityBackdrop(theme) {
@@ -526,19 +1293,16 @@ function drawWetlandBackdrop(theme) {
 
 function drawHud(level) {
   const status = pollutionStatus(state.pollution);
-  ctx.fillStyle = "rgba(3, 12, 14, 0.62)";
-  roundRect(16, 12, 292, 60, 8);
-  ctx.fill();
-  roundRect(W / 2 - 214, 12, 428, 60, 8);
-  ctx.fill();
-  roundRect(W - 354, 12, 338, 60, 8);
-  ctx.fill();
+  const theme = biomeTheme(level.biome);
+  comicPanel(16, 12, 292, 60, theme);
+  comicPanel(W / 2 - 214, 12, 428, 66, theme);
+  comicPanel(W - 354, 12, 338, 60, theme);
 
   bar(30, 28, 246, 16, state.playerHealth, "#41e5b4", "Energie");
   bar(W - 330, 28, 292, 16, state.pollution, status.color, level.metricLabel);
 
-  ctx.fillStyle = "#eff8f4";
-  ctx.font = "18px system-ui";
+  ctx.fillStyle = "#f8fffb";
+  ctx.font = "800 19px system-ui";
   ctx.textAlign = "center";
   ctx.fillText(level.name, W / 2, 35);
   ctx.fillStyle = "#d2e2dd";
@@ -553,6 +1317,27 @@ function drawHud(level) {
   drawSkillBar();
 }
 
+function comicPanel(x, y, w, h, theme) {
+  ctx.save();
+  ctx.fillStyle = "rgba(5, 18, 20, 0.72)";
+  roundRect(x + 4, y + 5, w, h, 8);
+  ctx.fill();
+  ctx.fillStyle = "rgba(7, 29, 32, 0.84)";
+  ctx.strokeStyle = theme.style.outline;
+  ctx.lineWidth = 3;
+  roundRect(x, y, w, h, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = theme.accent;
+  ctx.lineWidth = 2;
+  ctx.globalAlpha = 0.62;
+  ctx.beginPath();
+  ctx.moveTo(x + 12, y + h - 8);
+  ctx.lineTo(x + w - 12, y + h - 8);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawSkillBar() {
   const y = H - 48;
   const slots = [
@@ -561,9 +1346,12 @@ function drawSkillBar() {
     { label: "Autofire", value: "Skill gesperrt", color: "#93a8a2" }
   ];
 
-  ctx.fillStyle = "rgba(3, 12, 14, 0.58)";
+  ctx.fillStyle = "rgba(3, 12, 14, 0.7)";
+  ctx.strokeStyle = "#08303a";
+  ctx.lineWidth = 3;
   roundRect(W / 2 - 260, y - 10, 520, 42, 8);
   ctx.fill();
+  ctx.stroke();
   slots.forEach((slot, index) => {
     const x = W / 2 - 240 + index * 164;
     ctx.strokeStyle = slot.color;
@@ -580,13 +1368,17 @@ function drawSkillBar() {
 }
 
 function drawPlayer() {
+  ctx.save();
   ctx.fillStyle = "rgba(65, 229, 180, 0.2)";
   ctx.beginPath();
   ctx.ellipse(player.x, player.y + 18, 44, 9, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = "#08303a";
+  ctx.lineWidth = 4;
   ctx.fillStyle = "#dffdf5";
   roundRect(player.x - 28, player.y - 14, 56, 28, 8);
   ctx.fill();
+  ctx.stroke();
   ctx.fillStyle = "#41e5b4";
   ctx.fillRect(player.x - 18, player.y - 20, 36, 8);
   ctx.fillStyle = "#9fffea";
@@ -603,32 +1395,113 @@ function drawPlayer() {
   ctx.fill();
   ctx.fillStyle = "#0b1f22";
   ctx.fillRect(player.x - 6, player.y - 8, 12, 8);
+  ctx.restore();
 }
 
 function drawEnemy(enemy, level) {
   const isBoss = enemy.type === "boss";
   const visual = isBoss ? polluterVisual("megaEmitter") : polluterVisual(enemy.kind);
-  drawEnemyBody(enemy, visual, isBoss);
+  const roleScale = enemy.type === "polluter" ? 1.36 : enemy.type === "shield" ? 1.24 : 1.16;
+  const scale = isBoss ? 1 : (visual.scale || 1) * roleScale;
+  drawEnemyBody(enemy, visual, isBoss, scale);
+  drawEnemyRoleMarker(enemy, visual, isBoss, scale);
 
-  const hpRatio = enemy.hp / enemy.maxHp;
+  const hpRatio = clamp(enemy.hp / enemy.maxHp, 0, 1);
+  const sx = enemy.x + enemy.w / 2;
+  const sw = enemy.w * scale;
+  const showLabel = isBoss || enemy.type !== "drone" || state.enemiesRemaining <= 6;
+  const label = visual.label;
   ctx.fillStyle = visual.secondary;
-  ctx.fillRect(enemy.x, enemy.y - 8, enemy.w * hpRatio, 4);
+  ctx.strokeStyle = "#07171a";
+  ctx.lineWidth = 2;
+  roundRect(sx - sw / 2, enemy.y - 14, sw, 7, 3);
+  ctx.stroke();
+  ctx.fillRect(sx - sw / 2, enemy.y - 14, sw * hpRatio, 7);
 
-  ctx.fillStyle = "#eff8f4";
-  ctx.font = "10px system-ui";
-  ctx.textAlign = "center";
-  ctx.fillText(visual.label, enemy.x + enemy.w / 2, enemy.y - 13);
+  if (showLabel) {
+    const labelW = Math.max(76, Math.min(152, label.length * 7 + 22));
+    ctx.fillStyle = "rgba(5, 18, 20, 0.86)";
+    ctx.strokeStyle = visual.secondary;
+    ctx.lineWidth = 2;
+    roundRect(sx - labelW / 2, enemy.y - 39, labelW, 20, 6);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#eff8f4";
+    ctx.font = "900 11px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText(label, sx, enemy.y - 25);
+  }
+  drawThreatIcon(enemy.x + enemy.w + 8, enemy.y - 4, visual, isBoss ? 24 : enemy.type === "polluter" ? 21 : 18);
 }
 
-function drawEnemyBody(enemy, visual, isBoss) {
-  const x = enemy.x;
-  const y = enemy.y;
-  const w = enemy.w;
-  const h = enemy.h;
-
-  ctx.fillStyle = visual.primary;
-  ctx.strokeStyle = visual.secondary;
+function drawEnemyRoleMarker(enemy, visual, isBoss, scale = 1) {
+  const w = enemy.w * scale;
+  const h = enemy.h * scale;
+  const x = enemy.x + enemy.w / 2 - w / 2;
+  const y = enemy.y + enemy.h / 2 - h / 2;
+  ctx.save();
   ctx.lineWidth = 3;
+  ctx.strokeStyle = "#07171a";
+  ctx.fillStyle = visual.secondary;
+
+  if (isBoss || enemy.type === "polluter") {
+    ctx.fillStyle = "#fff3d1";
+    roundRect(x + w * 0.18, y + h * 0.24, w * 0.64, h * 0.3, 5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = visual.emission;
+    ctx.beginPath();
+    ctx.ellipse(x + w * 0.5, y + h * 0.78, w * 0.22, h * 0.13, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = "#07171a";
+    ctx.font = `900 ${isBoss ? 18 : 13}px system-ui`;
+    ctx.textAlign = "center";
+    ctx.fillText("!", x + w * 0.5, y + h * 0.48);
+  } else if (enemy.type === "shield") {
+    ctx.strokeStyle = "#ffd166";
+    for (let i = 0; i < 3; i += 1) {
+      ctx.beginPath();
+      ctx.moveTo(x + 10 + i * 13, y + 7);
+      ctx.lineTo(x + 24 + i * 13, y + h - 4);
+      ctx.stroke();
+    }
+  } else {
+    ctx.fillStyle = "#9fffea";
+    ctx.beginPath();
+    ctx.arc(x + w * 0.5, y + h * 0.42, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = visual.secondary;
+    ctx.beginPath();
+    ctx.arc(x + 4, y + h * 0.48, 7, 0, Math.PI * 2);
+    ctx.arc(x + w - 4, y + h * 0.48, 7, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawEnemyBody(enemy, visual, isBoss, scale = 1) {
+  const w = enemy.w * scale;
+  const h = enemy.h * scale;
+  const x = enemy.x + enemy.w / 2 - w / 2;
+  const y = enemy.y + enemy.h / 2 - h / 2;
+
+  ctx.save();
+  ctx.shadowColor = "rgba(0, 0, 0, 0.28)";
+  ctx.shadowBlur = 0;
+  ctx.shadowOffsetX = 4;
+  ctx.shadowOffsetY = 5;
+  ctx.fillStyle = visual.primary;
+  ctx.strokeStyle = "#07171a";
+  ctx.lineWidth = 4;
+
+  if (isBoss && visual.body === "tanker") {
+    drawTankerBoss(x, y, w, h, visual);
+    ctx.restore();
+    return;
+  }
 
   if (isBoss || visual.body === "core") {
     roundRect(x, y, isBoss ? w : w, isBoss ? h : h + 8, 12);
@@ -638,7 +1511,11 @@ function drawEnemyBody(enemy, visual, isBoss) {
     ctx.beginPath();
     ctx.arc(x + w / 2, y + h / 2, isBoss ? 18 : 12, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = visual.secondary;
+    ctx.lineWidth = 3;
+    ctx.stroke();
     drawEmissionPorts(x, y, w, h, visual, isBoss ? 4 : 2);
+    ctx.restore();
     return;
   }
 
@@ -651,7 +1528,9 @@ function drawEnemyBody(enemy, visual, isBoss) {
     ctx.arc(x + 6, y + 12, 9, 0, Math.PI * 2);
     ctx.arc(x + w - 6, y + 12, 9, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
     drawEmissionPorts(x, y, w, h, visual, 1);
+    ctx.restore();
     return;
   }
 
@@ -661,7 +1540,88 @@ function drawEnemyBody(enemy, visual, isBoss) {
     ctx.stroke();
     ctx.fillStyle = visual.secondary;
     ctx.fillRect(x + 16, y + 8, w - 32, 8);
+    ctx.strokeStyle = "#ffd166";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x + 20, y + 20, w - 40, 12);
     drawEmissionPorts(x, y, w, h, visual, 2);
+    ctx.restore();
+    return;
+  }
+
+  if (visual.body === "pod") {
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + h / 2, w * 0.42, h * 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = visual.secondary;
+    ctx.beginPath();
+    ctx.arc(x + w / 2, y + h * 0.42, Math.max(7, w * 0.16), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = visual.emission;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(x + w / 2, y + h / 2, w * 0.31, 0, Math.PI * 2);
+    ctx.stroke();
+    drawEmissionPorts(x, y, w, h, visual, 1);
+    ctx.restore();
+    return;
+  }
+
+  if (visual.body === "skimmer") {
+    ctx.beginPath();
+    ctx.moveTo(x + 4, y + h * 0.6);
+    ctx.lineTo(x + w * 0.24, y + h * 0.24);
+    ctx.lineTo(x + w * 0.76, y + h * 0.24);
+    ctx.lineTo(x + w - 4, y + h * 0.6);
+    ctx.lineTo(x + w * 0.72, y + h + 4);
+    ctx.lineTo(x + w * 0.28, y + h + 4);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = visual.secondary;
+    ctx.fillRect(x + w * 0.22, y + h * 0.5, w * 0.56, 7);
+    drawEmissionPorts(x, y, w, h, visual, 2);
+    ctx.restore();
+    return;
+  }
+
+  if (visual.body === "crate") {
+    roundRect(x + 4, y + 2, w - 8, h + 4, 5);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = visual.secondary;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(x + 10, y + 10);
+    ctx.lineTo(x + w - 10, y + h);
+    ctx.moveTo(x + w - 10, y + 10);
+    ctx.lineTo(x + 10, y + h);
+    ctx.stroke();
+    drawEmissionPorts(x, y, w, h, visual, 1);
+    ctx.restore();
+    return;
+  }
+
+  if (visual.body === "relay") {
+    roundRect(x + w * 0.18, y, w * 0.64, h + 10, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = visual.secondary;
+    ctx.beginPath();
+    ctx.arc(x + w / 2, y + h * 0.38, w * 0.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.strokeStyle = visual.secondary;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x + 8, y + h * 0.2);
+    ctx.lineTo(x + w - 8, y + h * 0.2);
+    ctx.moveTo(x + 8, y + h * 0.74);
+    ctx.lineTo(x + w - 8, y + h * 0.74);
+    ctx.stroke();
+    drawEmissionPorts(x, y, w, h, visual, 2);
+    ctx.restore();
     return;
   }
 
@@ -681,6 +1641,7 @@ function drawEnemyBody(enemy, visual, isBoss) {
       ctx.lineTo(x + w / 2 + Math.cos(a) * 16, y + h + 2 + Math.sin(a) * 16);
       ctx.stroke();
     }
+    ctx.restore();
     return;
   }
 
@@ -690,6 +1651,7 @@ function drawEnemyBody(enemy, visual, isBoss) {
     ctx.fillStyle = visual.secondary;
     ctx.fillRect(x + 8, y + h - 6, w - 16, 12);
     drawEmissionPorts(x, y, w, h, visual, 3);
+    ctx.restore();
     return;
   }
 
@@ -701,6 +1663,7 @@ function drawEnemyBody(enemy, visual, isBoss) {
     ctx.fillRect(x + 12, y + h, w - 24, 6);
     ctx.fillRect(x + w - 12, y + 14, 18, 6);
     drawEmissionPorts(x, y, w, h, visual, 2);
+    ctx.restore();
     return;
   }
 
@@ -714,6 +1677,7 @@ function drawEnemyBody(enemy, visual, isBoss) {
       ctx.ellipse(x + w / 2, y + h / 2, 6, 20, (Math.PI * 2 * i) / 3, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.restore();
     return;
   }
 
@@ -721,6 +1685,130 @@ function drawEnemyBody(enemy, visual, isBoss) {
   ctx.fill();
   ctx.stroke();
   drawEmissionPorts(x, y, w, h, visual, 1);
+  ctx.restore();
+}
+
+function drawTankerBoss(x, y, w, h, visual) {
+  ctx.fillStyle = "rgba(16, 16, 16, 0.28)";
+  ctx.beginPath();
+  ctx.ellipse(x + w * 0.5, y + h + 20, w * 0.46, 16, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = visual.primary;
+  ctx.strokeStyle = "#07171a";
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(x + 18, y + h * 0.42);
+  ctx.lineTo(x + w - 46, y + h * 0.34);
+  ctx.lineTo(x + w - 12, y + h * 0.58);
+  ctx.lineTo(x + w - 58, y + h + 8);
+  ctx.lineTo(x + 34, y + h + 8);
+  ctx.lineTo(x + 6, y + h * 0.66);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "#394147";
+  ctx.strokeStyle = "#07171a";
+  for (let i = 0; i < 4; i += 1) {
+    const tx = x + 58 + i * (w * 0.15);
+    roundRect(tx, y + h * 0.42, w * 0.11, h * 0.34, 10);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = visual.secondary;
+    ctx.fillRect(tx + 10, y + h * 0.5, w * 0.11 - 20, 6);
+    ctx.fillStyle = "#394147";
+  }
+
+  ctx.fillStyle = "#dffdf5";
+  ctx.strokeStyle = "#07171a";
+  roundRect(x + w * 0.66, y + 4, w * 0.18, h * 0.36, 8);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#253238";
+  for (let i = 0; i < 3; i += 1) ctx.fillRect(x + w * 0.69 + i * 18, y + 16, 10, 10);
+
+  ctx.fillStyle = "#30363b";
+  ctx.strokeStyle = "#07171a";
+  for (let i = 0; i < 2; i += 1) {
+    const sx = x + w * 0.48 + i * 34;
+    ctx.fillRect(sx, y + 2, 18, 44);
+    ctx.strokeRect(sx, y + 2, 18, 44);
+    ctx.fillStyle = "#8f9290";
+    ctx.beginPath();
+    ctx.ellipse(sx + 9, y - 8, 20, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = "#30363b";
+  }
+
+  ctx.strokeStyle = "#ffd166";
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(x + 38, y + h * 0.62);
+  ctx.lineTo(x + w - 68, y + h * 0.54);
+  ctx.stroke();
+
+  ctx.fillStyle = visual.emission;
+  ctx.beginPath();
+  ctx.ellipse(x + w * 0.32, y + h + 15, 48, 12, -0.08, 0, Math.PI * 2);
+  ctx.ellipse(x + w * 0.54, y + h + 20, 64, 15, 0.1, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#fff3d1";
+  ctx.strokeStyle = "#07171a";
+  roundRect(x + 18, y + 8, 96, 28, 7);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = "#07171a";
+  ctx.font = "900 16px system-ui";
+  ctx.textAlign = "center";
+  ctx.fillText("OIL", x + 66, y + 28);
+}
+
+function drawThreatIcon(x, y, visual, size = 15) {
+  ctx.save();
+  ctx.fillStyle = "#fff3d1";
+  ctx.strokeStyle = "#07171a";
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.arc(x, y, size, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.strokeStyle = visual.secondary;
+  ctx.fillStyle = visual.secondary;
+  ctx.lineWidth = 3;
+  if (visual.icon === "smog") {
+    ctx.beginPath();
+    ctx.arc(x - size * 0.4, y, size * 0.33, 0, Math.PI * 2);
+    ctx.arc(x, y - size * 0.27, size * 0.4, 0, Math.PI * 2);
+    ctx.arc(x + size * 0.4, y, size * 0.33, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (visual.icon === "saw") {
+    ctx.beginPath();
+    ctx.arc(x, y, size * 0.46, 0, Math.PI * 2);
+    ctx.stroke();
+    for (let i = 0; i < 6; i += 1) {
+      const a = (Math.PI * 2 * i) / 6;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + Math.cos(a) * size * 0.78, y + Math.sin(a) * size * 0.78);
+      ctx.stroke();
+    }
+  } else if (visual.icon === "oil") {
+    ctx.beginPath();
+    ctx.ellipse(x, y + size * 0.2, size * 0.62, size * 0.4, -0.2, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (visual.icon === "spray" || visual.icon === "toxic") {
+    ctx.beginPath();
+    ctx.arc(x, y, size * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillRect(x - 2, y - size * 0.76, 4, size * 1.5);
+  } else {
+    ctx.font = "900 14px system-ui";
+    ctx.textAlign = "center";
+    ctx.fillText("!", x, y + 5);
+  }
+  ctx.restore();
 }
 
 function drawEmissionPorts(x, y, w, h, visual, count) {
@@ -733,30 +1821,37 @@ function drawEmissionPorts(x, y, w, h, visual, count) {
 }
 
 function drawHazard(hazard) {
-  ctx.globalAlpha = hazard.alpha;
+  ctx.save();
+  ctx.globalAlpha = hazard.alpha + 0.12;
   ctx.fillStyle = hazard.color;
+  ctx.strokeStyle = "#07171a";
+  ctx.lineWidth = 3;
   if (hazard.shape === "flame") {
     ctx.beginPath();
     ctx.moveTo(hazard.x, hazard.y - hazard.r * 1.7);
     ctx.quadraticCurveTo(hazard.x + hazard.r * 1.2, hazard.y, hazard.x, hazard.y + hazard.r);
     ctx.quadraticCurveTo(hazard.x - hazard.r, hazard.y, hazard.x, hazard.y - hazard.r * 1.7);
     ctx.fill();
+    ctx.stroke();
   } else if (hazard.shape === "smog" || hazard.shape === "dust") {
     for (let i = 0; i < 3; i += 1) {
       ctx.beginPath();
       ctx.ellipse(hazard.x + (i - 1) * hazard.r, hazard.y + (i % 2) * 4, hazard.r * 1.15, hazard.r * 0.7, 0, 0, Math.PI * 2);
       ctx.fill();
+      ctx.stroke();
     }
   } else if (hazard.shape === "plastic") {
     ctx.save();
     ctx.translate(hazard.x, hazard.y);
     ctx.rotate(0.45);
     ctx.fillRect(-hazard.r, -hazard.r * 0.55, hazard.r * 2, hazard.r * 1.1);
+    ctx.strokeRect(-hazard.r, -hazard.r * 0.55, hazard.r * 2, hazard.r * 1.1);
     ctx.restore();
   } else if (hazard.shape === "toxic" || hazard.shape === "heat") {
     ctx.beginPath();
     ctx.arc(hazard.x, hazard.y, hazard.r, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
     ctx.strokeStyle = hazard.color;
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -766,17 +1861,26 @@ function drawHazard(hazard) {
     ctx.beginPath();
     ctx.ellipse(hazard.x, hazard.y, hazard.r * 1.45, hazard.r * 0.72, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
   }
-  ctx.globalAlpha = 1;
+  ctx.restore();
 }
 
 function drawPlayerBullet(bullet) {
-  ctx.strokeStyle = "#9fffea";
-  ctx.lineWidth = 7;
+  ctx.strokeStyle = bullet.color || "#9fffea";
+  ctx.lineWidth = bullet.weaponId === "bazooka" ? 12 : bullet.weaponId === "railPulse" ? 5 : bullet.radius || 7;
   ctx.beginPath();
-  ctx.moveTo(bullet.x, bullet.y + 20);
-  ctx.lineTo(bullet.x, bullet.y - 18);
+  ctx.moveTo(bullet.x, bullet.y + (bullet.weaponId === "bazooka" ? 14 : 20));
+  ctx.lineTo(bullet.x, bullet.y - (bullet.weaponId === "bazooka" ? 10 : 18));
   ctx.stroke();
+  if (bullet.blastRadius > 0) {
+    ctx.globalAlpha = 0.22;
+    ctx.fillStyle = bullet.color || "#ffd166";
+    ctx.beginPath();
+    ctx.arc(bullet.x, bullet.y, Math.min(22, bullet.blastRadius / 3), 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
 }
 
 function drawEnemyBullet(bullet) {
@@ -852,14 +1956,67 @@ function updateLabels() {
   environmentLabel.textContent = status.label;
   environmentLabel.style.color = status.color;
   scoreLabel.textContent = String(score);
-  skillLabel.textContent = skillCooldown <= 0 ? "bereit" : `${skillCooldown.toFixed(1)}s`;
+  skillLabel.textContent = currentWeapon ? currentWeapon.name : "Basiswaffe";
+  if (soundLabel) soundLabel.textContent = audio.settings.muted ? "aus" : "an";
+  if (soundToggle) {
+    soundToggle.textContent = audio.settings.muted ? "Sound aus" : "Sound an";
+    soundToggle.setAttribute("aria-pressed", audio.settings.muted ? "true" : "false");
+  }
+  updateDebugState();
 }
+
+function debugSnapshot() {
+  const level = LEVELS[levelIndex];
+  const overlayText = overlay?.hidden ? "" : overlay?.innerText || "";
+  return {
+    running,
+    levelIndex,
+    levelId: level.id,
+    levelName: level.name,
+    threat: level.threat,
+    weapon: currentWeapon?.name || null,
+    elapsed: Math.round(levelElapsed * 10) / 10,
+    playerHealth: Math.round(state.playerHealth * 10) / 10,
+    pollution: Math.round(state.pollution * 10) / 10,
+    enemiesRemaining: state.enemiesRemaining,
+    enemyCount: enemies.length,
+    hazards: hazards.length,
+    enemyBullets: enemyBullets.length,
+    score,
+    overlayHidden: Boolean(overlay?.hidden),
+    overlayText: overlayText.slice(0, 240)
+  };
+}
+
+function updateDebugState() {
+  if (!canvas || !state || !currentWeapon || !enemies) return;
+  const snap = debugSnapshot();
+  canvas.dataset.running = String(snap.running);
+  canvas.dataset.level = String(snap.levelId);
+  canvas.dataset.levelName = snap.levelName;
+  canvas.dataset.weapon = snap.weapon || "";
+  canvas.dataset.health = String(snap.playerHealth);
+  canvas.dataset.pollution = String(snap.pollution);
+  canvas.dataset.enemiesRemaining = String(snap.enemiesRemaining);
+  canvas.dataset.enemyCount = String(snap.enemyCount);
+  canvas.dataset.hazards = String(snap.hazards);
+  canvas.dataset.enemyBullets = String(snap.enemyBullets);
+  canvas.dataset.playerX = String(Math.round(player.x));
+  canvas.dataset.bullets = String(bullets.length);
+  const lowestEnemyHp = enemies.length ? Math.min(...enemies.map((enemy) => enemy.hp)) : 0;
+  canvas.dataset.lowestEnemyHp = String(Math.round(lowestEnemyHp * 100) / 100);
+}
+
+window.__ecoDebug = debugSnapshot;
 
 window.addEventListener("keydown", (event) => {
   const code = event.code || (event.key === " " ? "Space" : event.key);
   keys.add(code);
   if (code === "KeyQ" || event.key === "q") useSkill();
   if (code === "KeyR" || event.key === "r") resetLevel(levelIndex);
+  if (code === "KeyM" || event.key === "m") {
+    toggleSound();
+  }
   if (code === "Space") {
     event.preventDefault();
     fire();
@@ -878,6 +2035,7 @@ canvas.addEventListener("mousemove", (event) => {
 });
 
 canvas.addEventListener("pointerdown", (event) => {
+  audio.unlock();
   const rect = canvas.getBoundingClientRect();
   pointerX = ((event.clientX - rect.left) / rect.width) * W;
   player.x = clamp(pointerX, 32, W - 32);
@@ -900,11 +2058,28 @@ canvas.addEventListener("contextmenu", (event) => {
 
 overlay.addEventListener("click", (event) => {
   const action = event.target?.dataset?.action;
+  const upgrade = event.target?.closest?.("[data-upgrade]")?.dataset?.upgrade;
+  if (upgrade) chooseUpgrade(upgrade);
   if (action === "start") startGame();
   if (action === "restart") startGame();
   if (action === "next") beginLevel(levelIndex + 1, false);
+  if (action === "upgrade") showUpgradeChoice();
 });
 
+soundToggle?.addEventListener("click", toggleSound);
+
 resetLevel(0);
-showLevelBriefing(0, "start", "Starten");
-draw();
+const params = new URLSearchParams(window.location.search);
+const qaLevel = params.has("level") ? clamp(Number(params.get("level")) - 1, 0, LEVELS.length - 1) : 0;
+if (params.get("autostart") === "1") {
+  upgrades = createUpgradeState();
+  beginLevel(qaLevel, true);
+  const qaComplete = params.get("qaComplete");
+  if (qaComplete === "win" || qaComplete === "fail") {
+    window.setTimeout(() => endLevel(qaComplete === "win"), 220);
+  }
+} else {
+  resetLevel(qaLevel);
+  showLevelBriefing(qaLevel, "start", "Starten");
+  draw();
+}

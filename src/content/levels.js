@@ -215,9 +215,9 @@ export const LEVELS = [
   },
   {
     id: 10,
-    name: "Konzernkern",
+    name: "Tanker-Havarie",
     biome: "Metro-Zentrale",
-    threat: "Mega-Smog-Netzwerk",
+    threat: "Oel-Tanker mit Begleitflotte",
     metricLabel: "Regionale Stabilitaet",
     background: {
       sky: "#6ec6ca",
@@ -225,7 +225,7 @@ export const LEVELS = [
       accent: "#ffcc4d"
     },
     targetPollution: 56,
-    intro: "Das finale Netzwerk versucht, alle Regionen gleichzeitig zu ueberlasten.",
+    intro: "Der finale Tanker verliert Oel und laesst Begleitschiffe die Region abschirmen.",
     polluters: [
       { type: "smogDrone", hp: 1, score: 12, pollution: 3, speed: 1.45 },
       { type: "stackBot", hp: 2, score: 26, pollution: 5, speed: 1 },
